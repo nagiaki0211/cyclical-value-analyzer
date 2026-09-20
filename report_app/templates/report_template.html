@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>{{ company.name }}（{{ company.code }}）企業分析レポート</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --text: #1f2430; --muted: #6b7280;
+    --accent: #2563eb; --good: #16a34a; --warn: #d97706; --bad: #dc2626;
+    --border: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+         line-height:1.7; }
+  .wrap { max-width:960px; margin:0 auto; padding:24px 16px 80px; }
+  header.top { background:linear-gradient(135deg,#1e293b,#334155); color:#fff;
+               border-radius:12px; padding:28px 24px; margin-bottom:24px; }
+  header.top h1 { margin:0 0 6px; font-size:1.6em; }
+  header.top .sub { color:#cbd5e1; font-size:0.95em; }
+  .badges { margin-top:12px; }
+  .badge { display:inline-block; background:rgba(255,255,255,0.15); border:1px solid rgba(255,255,255,0.3);
+           border-radius:999px; padding:4px 12px; margin:2px 6px 2px 0; font-size:0.85em; }
+  section.card { background:var(--card); border:1px solid var(--border); border-radius:12px;
+                 padding:20px 22px; margin-bottom:20px; }
+  section.card h2 { margin-top:0; font-size:1.2em; border-left:5px solid var(--accent); padding-left:10px; }
+  section.card h3 { font-size:1.02em; color:#374151; margin-top:22px; }
+  table { width:100%; border-collapse:collapse; margin:10px 0; font-size:0.92em; }
+  th, td { border:1px solid var(--border); padding:7px 10px; text-align:right; }
+  th { background:#f1f5f9; text-align:center; white-space:nowrap; }
+  td:first-child, th:first-child { text-align:left; }
+  .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin:12px 0; }
+  .kpi { background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .kpi .label { font-size:0.78em; color:var(--muted); }
+  .kpi .value { font-size:1.25em; font-weight:700; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:0.8em; font-weight:700; }
+  .pill.ok { background:#dcfce7; color:#166534; }
+  .pill.ng { background:#f1f5f9; color:#64748b; }
+  .pill.unknown { background:#f1f5f9; color:#94a3b8; }
+  .flag-row.triggered { background:#fef2f2; color:var(--bad); font-weight:700; }
+  .flag-row.unknown td { color:var(--muted); }
+  .grade { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px;
+           border-radius:50%; font-weight:800; color:#fff; }
+  .grade.A { background:#16a34a; } .grade.B { background:#65a30d; } .grade.C { background:#d97706; }
+  .grade.D { background:#ea580c; } .grade.E { background:#dc2626; } .grade.none { background:#94a3b8; }
+  .note { color:var(--muted); font-size:0.85em; }
+  .summary-box { background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; padding:16px 18px; }
+  .type-section { border-left:4px solid var(--accent); padding-left:16px; margin:14px 0; }
+  .disclaimer { background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:16px 18px;
+                font-size:0.9em; color:#7c5e10; }
+  .glossary dt { font-weight:700; margin-top:10px; }
+  .glossary dd { margin:2px 0 0; color:var(--muted); }
+  footer { text-align:center; color:var(--muted); font-size:0.8em; margin-top:30px; }
+  .missing { color:var(--muted); font-style:italic; }
+  svg text { font-size:11px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>{{ company.name }}（{{ company.code }}） 企業分析レポート</h1>
+    <div class="sub">{{ company.sector }}{% if company.name_en %} ／ {{ company.name_en }}{% endif %} ・ 生成日時: {{ generated_at }}</div>
+    <div class="badges">
+      {% if asset_type.matched %}<span class="badge">資産バリュー株 該当</span>{% endif %}
+      {% if profit_type.matched %}<span class="badge">収益バリュー株 該当</span>{% endif %}
+      {% if cyclical_type.matched %}<span class="badge">シクリカルバリュー株 該当</span>{% endif %}
+      {% if not (asset_type.matched or profit_type.matched or cyclical_type.matched) %}
+        <span class="badge">明確な該当タイプなし</span>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if company.fetch_errors %}
+  <section class="card" style="border-color:#fecaca;">
+    <h2 style="color:var(--bad);">データ取得に関する注意</h2>
+    <ul>
+      {% for err in company.fetch_errors %}<li>{{ err }}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <h2>1. 基本情報</h2>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="label">証券コード</div><div class="value">{{ company.code }}</div></div>
+      <div class="kpi"><div class="label">業種</div><div class="value">{{ company.sector or "―" }}</div></div>
+      <div class="kpi"><div class="label">株価</div><div class="value">{{ "%.1f"|format(company.price) if company.price is not none else "―" }} 円</div></div>
+      <div class="kpi"><div class="label">時価総額</div><div class="value">{{ "%.0f"|format(market_cap_oku) if market_cap_oku is not none else "―" }} 億円</div></div>
+      <div class="kpi"><div class="label">PER</div><div class="value">{{ company.per if company.per is not none else "―" }} 倍</div></div>
+      <div class="kpi"><div class="label">PBR</div><div class="value">{{ company.pbr if company.pbr is not none else "―" }} 倍</div></div>
+      <div class="kpi"><div class="label">配当利回り</div><div class="value">{{ company.dividend_yield if company.dividend_yield is not none else "―" }} %</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2. 事業内容</h2>
+    <p>{{ company.business_summary or "取得できませんでした。" }}</p>
+    {% if manual.business_history %}
+    <h3>沿革(手入力)</h3>
+    <p>{{ manual.business_history }}</p>
+    {% else %}
+    <p class="note">沿革は株探の無料ページからは取得できません。manual_data/{{ company.code }}.json の
+      business_history に記入すると、ここに表示されます。</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>3. 業績推移</h2>
+    {{ charts.revenue_chart|safe }}
+    {{ charts.profit_chart|safe }}
+    <table>
+      <tr><th>決算期</th><th>売上高</th><th>営業利益</th><th>経常利益</th><th>純利益</th><th>1株益</th><th>1株配</th></tr>
+      {% for r in company.annual_performance %}
+      <tr {% if r.is_forecast %}style="color:var(--muted);"{% endif %}>
+        <td>{{ r.period }}{% if r.is_forecast %}(予){% endif %}</td>
+        <td>{{ "{:,.0f}".format(r.revenue) if r.revenue is not none else "―" }}</td>
+        <td>{{ "{:,.0f}".format(r.operating_income) if r.operating_income is not none else "―" }}</td>
+        <td>{{ "{:,.0f}".format(r.ordinary_income) if r.ordinary_income is not none else "―" }}</td>
+        <td>{{ "{:,.0f}".format(r.net_income) if r.net_income is not none else "―" }}</td>
+        <td>{{ r.eps if r.eps is not none else "―" }}</td>
+        <td>{{ r.dps if r.dps is not none else "―" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="note">単位: 百万円(1株益・1株配のみ円)。出典: 株探(kabutan.jp)。</p>
+  </section>
+
+  <section class="card">
+    <h2>4. 財務諸表の要約</h2>
+    <h3>貸借対照表(要約)</h3>
+    <table>
+      <tr><th>決算期</th><th>総資産</th><th>自己資本</th><th>自己資本比率</th><th>剰余金</th></tr>
+      {% for r in company.financial_position %}
+      <tr>
+        <td>{{ r.period }}</td>
+        <td>{{ "{:,.0f}".format(r.total_assets) if r.total_assets is not none else "―" }}</td>
+        <td>{{ "{:,.0f}".format(r.equity) if r.equity is not none else "―" }}</td>
+        <td>{{ r.equity_ratio if r.equity_ratio is not none else "―" }} %</td>
+        <td>{{ "{:,.0f}".format(r.retained_earnings) if r.retained_earnings is not none else "―" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="note">流動資産・固定資産等の内訳は株探の無料ページでは取得できないため、
+      manual_data/{{ company.code }}.json での手入力補完が必要です(未入力の場合、
+      流動比率・当座比率・固定比率・清算価値は「データ不足」と表示されます)。</p>
+
+    <h3>キャッシュフロー推移</h3>
+    {{ charts.cf_chart|safe }}
+    <table>
+      <tr><th>決算期</th><th>営業CF</th><th>投資CF</th><th>財務CF</th><th>現金等残高</th></tr>
+      {% for r in company.cashflow %}
+      <tr>
+        <td>{{ r.period }}</td>
+        <td>{{ "{:,.0f}".format(r.operating_cf) if r.operating_cf is not none else "―" }}</td>
+        <td>{{ "{:,.0f}".format(r.investing_cf) if r.investing_cf is not none else "―" }}</td>
+        <td>{{ "{:,.0f}".format(r.financing_cf) if r.financing_cf is not none else "―" }}</td>
+        <td>{{ "{:,.0f}".format(r.cash_balance) if r.cash_balance is not none else "―" }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>5. 財務指標</h2>
+
+    <h3>① 健全性</h3>
+    <table>
+      <tr><th>指標</th><th>値</th><th>健全ライン</th><th>危険ライン</th></tr>
+      <tr><td>自己資本比率</td><td>{{ "%.1f"|format(health_metrics.equity_ratio.value) if health_metrics.equity_ratio.value is not none else "―" }}%</td><td>{{ health_metrics.equity_ratio.healthy }}</td><td>{{ health_metrics.equity_ratio.danger }}</td></tr>
+      <tr><td>負債比率</td><td>{{ "%.1f"|format(health_metrics.debt_ratio.value) if health_metrics.debt_ratio.value is not none else "データ不足" }}{% if health_metrics.debt_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.debt_ratio.healthy }}</td><td>{{ health_metrics.debt_ratio.danger }}</td></tr>
+      <tr><td>流動比率</td><td>{{ "%.1f"|format(health_metrics.current_ratio.value) if health_metrics.current_ratio.value is not none else "データ不足" }}{% if health_metrics.current_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.current_ratio.healthy }}</td><td>{{ health_metrics.current_ratio.danger }}</td></tr>
+      <tr><td>当座比率</td><td>{{ "%.1f"|format(health_metrics.quick_ratio.value) if health_metrics.quick_ratio.value is not none else "データ不足" }}{% if health_metrics.quick_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.quick_ratio.healthy }}</td><td>―</td></tr>
+      <tr><td>固定比率</td><td>{{ "%.1f"|format(health_metrics.fixed_ratio.value) if health_metrics.fixed_ratio.value is not none else "データ不足" }}{% if health_metrics.fixed_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.fixed_ratio.healthy }}</td><td>{{ health_metrics.fixed_ratio.danger }}</td></tr>
+    </table>
+
+    <h3>② 収益性</h3>
+    <table>
+      <tr><th>指標</th><th>値</th><th>目安</th></tr>
+      <tr><td>売上総利益率</td><td>{{ "%.1f"|format(profitability_metrics.gross_margin.value) if profitability_metrics.gross_margin.value is not none else "データ不足" }}{% if profitability_metrics.gross_margin.value is not none %}%{% endif %}</td><td>{{ profitability_metrics.gross_margin.good }}</td></tr>
+      <tr><td>営業利益率</td><td>{{ "%.1f"|format(profitability_metrics.operating_margin.value) if profitability_metrics.operating_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.operating_margin.good }}</td></tr>
+      <tr><td>経常利益率</td><td>{{ "%.1f"|format(profitability_metrics.ordinary_margin.value) if profitability_metrics.ordinary_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.ordinary_margin.good }}</td></tr>
+      <tr><td>純利益率</td><td>{{ "%.1f"|format(profitability_metrics.net_margin.value) if profitability_metrics.net_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.net_margin.good }}</td></tr>
+      <tr><td>ROE</td><td>{{ "%.1f"|format(profitability_metrics.roe.value) if profitability_metrics.roe.value is not none else "―" }}%</td><td>{{ profitability_metrics.roe.good }}</td></tr>
+      <tr><td>ROA</td><td>{{ "%.1f"|format(profitability_metrics.roa.value) if profitability_metrics.roa.value is not none else "―" }}%</td><td>{{ profitability_metrics.roa.good }}</td></tr>
+    </table>
+
+    <h3>③ 成長性</h3>
+    <table>
+      <tr><th>指標</th><th>値</th><th>目安</th></tr>
+      <tr><td>売上高成長率</td><td>{{ "%.1f"|format(growth_metrics.revenue_growth.value) if growth_metrics.revenue_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.revenue_growth.good }}</td></tr>
+      <tr><td>営業利益成長率</td><td>{{ "%.1f"|format(growth_metrics.operating_income_growth.value) if growth_metrics.operating_income_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.operating_income_growth.good }}</td></tr>
+      <tr><td>純利益成長率</td><td>{{ "%.1f"|format(growth_metrics.net_income_growth.value) if growth_metrics.net_income_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.net_income_growth.good }}</td></tr>
+      <tr><td>総資産回転率</td><td>{{ "%.2f"|format(growth_metrics.asset_turnover.value) if growth_metrics.asset_turnover.value is not none else "―" }}回</td><td>{{ growth_metrics.asset_turnover.good }}</td></tr>
+      <tr><td>売上債権回転率</td><td>{{ "%.2f"|format(growth_metrics.receivables_turnover.value) if growth_metrics.receivables_turnover.value is not none else "データ不足" }}{% if growth_metrics.receivables_turnover.value is not none %}回{% endif %}</td><td>{{ growth_metrics.receivables_turnover.good }}</td></tr>
+    </table>
+
+    <h3>🚩 危険信号フラグ</h3>
+    <table>
+      <tr><th>チェック項目</th><th>判定</th></tr>
+      {% for f in danger_flags %}
+      <tr class="flag-row {% if f.triggered %}triggered{% elif f.triggered is none %}unknown{% endif %}">
+        <td>{{ f.label }}{% if f.note %}<br><span class="note">メモ: {{ f.note }}</span>{% endif %}</td>
+        <td>
+          {% if f.triggered is none %}<span class="pill unknown">判定不可</span>
+          {% elif f.triggered %}<span class="pill" style="background:#fee2e2;color:#991b1b;">該当</span>
+          {% else %}<span class="pill ok">問題なし</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>6. 企業価値の目安</h2>
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="label">清算価値</div>
+        <div class="value">{% if liquidation.value is not none %}{{ "{:,.0f}".format(liquidation.value) }} 百万円{% else %}<span class="missing">データ不足</span>{% endif %}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">DCF弱気シナリオ</div>
+        <div class="value">{% if dcf.bear_case is not none %}{{ "{:,.0f}".format(dcf.bear_case) }} 百万円{% else %}<span class="missing">データ不足</span>{% endif %}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">DCF強気シナリオ</div>
+        <div class="value">{% if dcf.bull_case is not none %}{{ "{:,.0f}".format(dcf.bull_case) }} 百万円{% else %}<span class="missing">データ不足</span>{% endif %}</div>
+      </div>
+      <div class="kpi">
+        <div class="label">ネットキャッシュ枯渇年数</div>
+        <div class="value">
+          {% if cash_depletion.applicable == false %}該当なし(黒字)
+          {% elif cash_depletion.years is not none %}{{ "%.1f"|format(cash_depletion.years) }} 年
+          {% else %}<span class="missing">データ不足</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    {% if liquidation.missing_fields %}
+    <p class="note">清算価値の算出には以下の項目が不足しています: {{ liquidation.missing_fields|join("、") }}
+      (manual_data/{{ company.code }}.json に入力してください)</p>
+    {% endif %}
+    {% if liquidation.value is not none and company.market_cap is not none %}
+    <p>{% if company.market_cap < liquidation.value %}
+      現在の時価総額は清算価値を下回っており、「PBR1倍割れ」的な割安のサインです。
+    {% else %}
+      現在の時価総額は清算価値を上回っています。
+    {% endif %}</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>7. 投資判断(7項目×5段階評価)</h2>
+    <table>
+      <tr><th>項目</th><th>評価</th><th>詳細</th></tr>
+      {% for g in grades %}
+      <tr>
+        <td>{{ g.no }}. {{ g.label }}</td>
+        <td><span class="grade {{ g.grade or 'none' }}">{{ g.grade or "―" }}</span></td>
+        <td>
+          {% if g.no in [3,4,5] %}
+            {% if g.evaluated %}{{ g.passed }} / {{ g.evaluated }} 項目が良好基準を満たす{% else %}<span class="missing">データ不足</span>{% endif %}
+          {% elif g.no in [1,2] %}
+            {% if g.max_score %}スコア {{ g.score }} / {{ g.max_score }}{% else %}<span class="missing">データ不足</span>{% endif %}
+          {% elif g.no == 6 %}
+            {{ g.notes }}
+          {% elif g.no == 7 %}
+            配当性向: {% if g.payout_ratio is not none %}{{ "%.1f"|format(g.payout_ratio) }}%{% else %}データ不足{% endif %} ／ {{ g.notes }}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% if a_grade_items %}
+    <p><strong>A評価の項目:</strong> {{ a_grade_items|join("、") }}
+      ―― 全項目がAになる銘柄はまれなので、これらは銘柄の強みとして注目できます。</p>
+    {% else %}
+    <p class="note">今回のデータではA評価となった項目はありませんでした。</p>
+    {% endif %}
+  </section>
+
+  {% if asset_type.matched %}
+  <section class="card">
+    <h2>資産バリュー株としての着眼点</h2>
+    <div class="type-section">
+      <p>PBR {{ asset_type.pbr }}倍(基準: 0.5倍以下)、自己資本比率 {{ "%.1f"|format(asset_type.equity_ratio) }}%(基準: 60%以上)
+        の条件を満たしています。清算価値({{ "{:,.0f}".format(liquidation.value) if liquidation.value is not none else "算出不可" }}百万円)
+        と時価総額を比較し、割安度を確認してください。</p>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if profit_type.matched %}
+  <section class="card">
+    <h2>収益バリュー株としての着眼点</h2>
+    <div class="type-section">
+      <p>
+        {% if profit_type.relaxation_level == 0 %}
+          5条件(営業利益率10%以上・PER10倍以下・PBR1.5倍以下・ROA7%以上・時価総額300億円以下)をすべて満たしています。
+        {% else %}
+          厳格な5条件のうち「{{ profit_type.relaxed_condition }}」を緩和した基準で該当しました
+          (緩和段階: レベル{{ profit_type.relaxation_level }})。
+        {% endif %}
+        補助指標のグレアムの公式(PER×PBR)は {{ "%.1f"|format(profit_type.graham_number) }}
+        で、{{ "22.5以下の目安を満たしています" if profit_type.graham_ok else "22.5の目安を上回っています" }}。
+      </p>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if cyclical_type.matched %}
+  <section class="card">
+    <h2>シクリカルバリュー株としての着眼点</h2>
+    <div class="type-section">
+      <p>業種「{{ cyclical_type.sector }}」は景気循環の影響を受けやすい業種に分類されます。
+        現在のサイクル位置の目安: <strong>{{ cyclical_type.phase }}</strong>
+        {% if cyclical_type.detail %}({{ cyclical_type.detail }}){% endif %}。
+        この判定はあくまで機械的な目安であり、断定はできません。</p>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <h2>8. 総括</h2>
+    <div class="summary-box">{{ summary_text }}</div>
+  </section>
+
+  <section class="card glossary">
+    <h2>用語集</h2>
+    <dl>
+      {% for term, desc in glossary.items() %}
+      <dt>{{ term }}</dt><dd>{{ desc }}</dd>
+      {% endfor %}
+    </dl>
+  </section>
+
+  <div class="disclaimer">
+    本レポートは投資助言ではなく、分析のための参考情報です。株探(kabutan.jp)等の
+    公開情報をもとに機械的に算出したものであり、内容の正確性を保証するものでは
+    ありません。貸借対照表の内訳など一部項目は手入力による補完が必要であり、
+    未入力の場合は関連する指標が算出されません。投資の最終判断はご自身の
+    責任で行ってください。
+  </div>
+
+  <footer>Generated by 個別銘柄・企業分析レポート生成アプリ ／ データ出典: 株探 (kabutan.jp)</footer>
+</div>
+</body>
+</html>
