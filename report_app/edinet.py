@@ -303,7 +303,13 @@ def extract_segment_info(html: str) -> list[dict] | None:
     )
     if not heading:
         return None
-    table = heading.find_next("table")
+
+    # セグメント注記には通常「前連結会計年度」(前期)と「当連結会計年度」(当期)の
+    # 2つの表が並んで掲載されている。最初に見つかる表は前期のものであることが多く、
+    # そのまま使うと売上高が現在の実績(kabutan等の最新値)と一致しなくなる。
+    # 「当連結会計年度」または「当事業年度」の見出しを探し、その直後の表を使う。
+    current_year_marker = heading.find_next(string=re.compile(r"当連結会計年度|当事業年度"))
+    table = current_year_marker.find_next("table") if current_year_marker else heading.find_next("table")
     if not table:
         return None
 

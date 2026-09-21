@@ -161,7 +161,7 @@
         <td>{% if r.yoy_operating_income is not none %}{{ "%+.1f"|format(r.yoy_operating_income) }}%{% else %}―{% endif %}</td>
         <td>{{ "{:,.0f}".format(r.net_income) if r.net_income is not none else "―" }}</td>
         <td>{% if r.yoy_net_income is not none %}{{ "%+.1f"|format(r.yoy_net_income) }}%{% else %}―{% endif %}</td>
-        <td>{% if r.ttm_revenue is not none %}{{ "{:,.0f}".format(r.ttm_revenue) }}{% else %}<span class="missing">計算中</span>{% endif %}</td>
+        <td>{% if r.ttm_revenue is not none %}{{ "{:,.0f}".format(r.ttm_revenue) }}{% else %}<span class="missing">算出不可(直近4四半期未満)</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </table>
