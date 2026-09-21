@@ -192,7 +192,22 @@
         </td>
       </tr>
       {% endfor %}
+      {% if segments_total %}
+      <tr style="font-weight:bold;border-top:2px solid var(--border);">
+        <td>合計</td>
+        <td>{{ "{:,.0f}".format(segments_total.revenue) if segments_total.revenue is not none else "―" }}</td>
+        <td>{{ "{:,.0f}".format(segments_total.profit) if segments_total.profit is not none else "―" }}</td>
+        <td>
+          {% if segments_total.revenue and segments_total.profit is not none %}{{ "%.1f"|format(segments_total.profit / segments_total.revenue * 100) }}%{% else %}―{% endif %}
+        </td>
+      </tr>
+      {% endif %}
     </table>
+    <p class="note">
+      「合計」は各セグメントの単純合計です。会社全体の売上高(業績推移の表)とおおむね一致しますが、
+      セグメント間取引の調整額等により、完全には一致しない場合があります。
+      セグメント利益は経常利益ベース等、会社によって基準が異なる場合があります。
+    </p>
   </section>
   {% endif %}
 

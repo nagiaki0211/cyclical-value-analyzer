@@ -67,10 +67,14 @@ def _to_number(text: str) -> float | None:
 
 
 def _parse_market_cap(text: str) -> float | None:
-    """"44兆1,498億円" のような表記を円単位のfloatに変換する。"""
+    """"44兆1,498億円" や "86.9億円" のような表記を円単位のfloatに変換する。
+
+    小型株では億円の部分が小数(例: "86.9億円")になることが多いため、
+    小数点を許容する。
+    """
     if not text:
         return None
-    m = re.match(r"(?:(\d+)兆)?(?:([\d,]+)億円)?", text)
+    m = re.match(r"(?:(\d+)兆)?(?:([\d,]+(?:\.\d+)?)億円)?", text)
     if not m:
         return None
     cho = float(m.group(1)) if m.group(1) else 0

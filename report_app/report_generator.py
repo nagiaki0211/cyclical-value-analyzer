@@ -205,6 +205,14 @@ def generate_report(code: str) -> Path:
 
     quarterly_analysis = metrics.compute_quarterly_analysis(company_data.quarterly_performance)
     segments = manual.get("_segments")
+    segments_total = None
+    if segments:
+        revenues = [s.get("revenue") for s in segments]
+        profits = [s.get("profit") for s in segments]
+        segments_total = {
+            "revenue": sum(revenues) if all(v is not None for v in revenues) else None,
+            "profit": sum(profits) if all(v is not None for v in profits) else None,
+        }
     major_shareholders = manual.get("_major_shareholders")
 
     valuation_ratios = advanced_metrics.compute_valuation_ratios(
@@ -273,6 +281,7 @@ def generate_report(code: str) -> Path:
         quarterly_analysis=quarterly_analysis,
         quarterly_advice=QUARTERLY_ADVICE,
         segments=segments,
+        segments_total=segments_total,
         major_shareholders=major_shareholders,
         governance=governance,
         roic=roic,
