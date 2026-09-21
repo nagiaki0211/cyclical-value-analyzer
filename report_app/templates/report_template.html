@@ -107,6 +107,9 @@
   <section class="card">
     <h2>2. 事業内容</h2>
     <p>{{ company.business_summary or "取得できませんでした。" }}</p>
+    {% if business_overview %}
+    <p class="note"><strong>事業構成の自動要約(データから機械的に生成):</strong> {{ business_overview }}</p>
+    {% endif %}
     {% if manual.business_history %}
     <h3>沿革(手入力)</h3>
     <p>{{ manual.business_history }}</p>
@@ -422,7 +425,7 @@
   {% endif %}
 
   <section class="card">
-    <h2>11. 投資判断(7項目×5段階評価)</h2>
+    <h2>11. 投資判断(6項目×5段階評価)</h2>
     <h3>評価(A〜E)の基準</h3>
     <div class="grade-def-list">
       {% for d in grade_definitions %}
@@ -442,8 +445,6 @@
           {% elif g.no in [1,2] %}
             {% if g.max_score %}スコア {{ g.score }} / {{ g.max_score }}{% else %}<span class="missing">データ不足</span>{% endif %}
           {% elif g.no == 6 %}
-            {{ g.notes }}
-          {% elif g.no == 7 %}
             配当性向: {% if g.payout_ratio is not none %}{{ "%.1f"|format(g.payout_ratio) }}%{% else %}データ不足{% endif %} ／ {{ g.notes }}
           {% endif %}
         </td>

@@ -49,9 +49,8 @@ TEMPLATE = {
     "capital_increase_notes": None,  # 増資履歴に関するメモ(第三者割当増資の有無等)
     "receivables_prev_year": None,  # 前年の売掛金(急増チェック用)
     "inventory_prev_year": None,  # 前年の棚卸資産(急増チェック用)
-    # 定性情報(項目6: 事業素質、項目7: 株主重視姿勢)
+    # 定性情報(項目6: 株主重視姿勢)
     "business_history": None,  # 沿革
-    "qualitative_business_notes": None,  # 事業の性質・競合状況・多角化度合い等
     "shareholder_return_notes": None,  # 自社株買い実績等
 }
 

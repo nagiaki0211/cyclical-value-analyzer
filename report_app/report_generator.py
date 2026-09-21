@@ -215,6 +215,12 @@ def generate_report(code: str) -> Path:
         }
     major_shareholders = manual.get("_major_shareholders")
 
+    business_overview = summary.build_business_overview(
+        segments=segments,
+        segments_total=segments_total,
+        quarterly_analysis=quarterly_analysis,
+    )
+
     valuation_ratios = advanced_metrics.compute_valuation_ratios(
         market_cap=market_cap_million,
         revenue=latest.get("revenue"),
@@ -272,6 +278,7 @@ def generate_report(code: str) -> Path:
         grades=grades,
         a_grade_items=a_grade_items,
         summary_text=summary_text,
+        business_overview=business_overview,
         charts=charts,
         glossary=GLOSSARY,
         manual=manual,

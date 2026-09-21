@@ -1,9 +1,16 @@
 """
-投資判断: 7項目×5段階評価(A〜E)(仕様書 6-4節)。
+投資判断: 6項目×5段階評価(A〜E)(仕様書 6-4節をベースに、数値化できない
+「事業素質」項目を除いた構成)。
 
 各項目は「良好条件をいくつ満たすか」の比率でA〜Eを機械的に算出する。
-定性項目(事業素質・株主重視姿勢の一部)は自動評価が難しいため、
-文章情報として別途表示し、レターグレードは数値化できる範囲のみ付与する。
+株主重視姿勢の一部(自社株買い実績等)は自動評価が難しいため、
+文章情報として別途表示する。
+
+なお原典(たーちゃんの本)では「事業素質」を含む7項目評価だが、これは
+競合優位性・参入障壁といった定性判断が中心で、数値の閾値による
+機械的な評価にはなじまないため、レターグレード評価からは除外している。
+事業内容の自動要約(セグメント構成・直近動向等)は「2. 事業内容」セクションに
+別途記載する。
 
 運用ルール:
 - 全項目がA評価になる銘柄はまず存在しない前提。1項目でもA評価があれば
@@ -26,9 +33,10 @@ GRADE_NOTES = (
     "項目1・2(資産/収益力から見た割安性)はPBR・PER・DCF等の複数指標を"
     "0〜2点でスコア化し、その合計割合で判定します。項目3〜5(財務健全性・"
     "収益性・成長性)は、該当する各指標が基準を満たすかどうかの割合で判定します。"
-    "項目6(事業素質)は定性情報のため自動評価しません。項目7(株主重視姿勢)は"
-    "配当性向が20〜50%の範囲であればA、それ以外の配当ありはC、無配はEとする"
-    "簡易ルールで判定します。"
+    "項目6(株主重視姿勢)は配当性向が20〜50%の範囲であればA、それ以外の配当ありはC、"
+    "無配はEとする簡易ルールで判定します。なお原典にある「事業素質」は定性判断が"
+    "中心で数値評価になじまないため、この評価からは除外し、"
+    "「2. 事業内容」セクションの自動要約で代替しています。"
 )
 
 
@@ -97,14 +105,8 @@ def grade_growth(growth_metrics: dict) -> dict:
     return _grade_from_metric_group(growth_metrics)
 
 
-def grade_business_quality(manual: dict) -> dict:
-    """項目6: 事業素質(定性項目のため自動評価なし)。"""
-    notes = manual.get("qualitative_business_notes")
-    return {"grade": None, "notes": notes or "情報未入力(manual_data ファイルに追記してください)"}
-
-
 def grade_shareholder_return(eps: float | None, dps: float | None, manual: dict) -> dict:
-    """項目7: 株主重視姿勢(配当性向は自動計算、自社株買い実績は定性メモ)。"""
+    """項目6: 株主重視姿勢(配当性向は自動計算、自社株買い実績は定性メモ)。"""
     payout_ratio = None
     if eps is not None and dps is not None and eps > 0:
         payout_ratio = dps / eps * 100
@@ -133,8 +135,7 @@ def compile_grades(*, pbr, per, market_cap, liquidation_value, dcf, health_metri
         {"no": 3, "label": "財務健全性", **grade_financial_health(health_metrics)},
         {"no": 4, "label": "収益性", **grade_profitability(profitability_metrics)},
         {"no": 5, "label": "成長性", **grade_growth(growth_metrics)},
-        {"no": 6, "label": "事業素質", **grade_business_quality(manual)},
-        {"no": 7, "label": "株主重視姿勢", **grade_shareholder_return(eps, dps, manual)},
+        {"no": 6, "label": "株主重視姿勢", **grade_shareholder_return(eps, dps, manual)},
     ]
     a_grade_items = [i["label"] for i in items if i.get("grade") == "A"]
     return items, a_grade_items

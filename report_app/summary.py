@@ -6,6 +6,70 @@
 from __future__ import annotations
 
 
+def build_business_overview(
+    *,
+    segments: list[dict] | None,
+    segments_total: dict | None,
+    quarterly_analysis: list[dict] | None,
+) -> str | None:
+    """
+    「2. 事業内容」に添える、セグメント構成・直近動向の自動要約。
+
+    AIによる自然文生成ではなく、取得済みの構造化データ(セグメント別
+    売上高・利益、四半期の前年同期比等)から機械的に文章を組み立てる
+    ルールベース方式。事業の強み・競争優位性といった定性判断(旧・項目6
+    「事業素質」)の代わりにはならないが、事業構成を素早く把握する
+    助けとして表示する。
+    """
+    lines: list[str] = []
+
+    if segments and segments_total and segments_total.get("revenue"):
+        total_revenue = segments_total["revenue"]
+        ranked = sorted(
+            (s for s in segments if s.get("revenue") is not None),
+            key=lambda s: s["revenue"],
+            reverse=True,
+        )
+        if ranked:
+            top = ranked[0]
+            top_share = top["revenue"] / total_revenue * 100
+            if len(ranked) == 1:
+                lines.append(f"事業セグメントは「{top['name']}」の1本で構成されています。")
+            elif top_share >= 50:
+                lines.append(
+                    f"事業セグメントのうち「{top['name']}」が売上高の{top_share:.0f}%を占める主力事業です。"
+                )
+            else:
+                second = ranked[1]
+                second_share = second["revenue"] / total_revenue * 100
+                lines.append(
+                    f"事業セグメントは「{top['name']}」({top_share:.0f}%)と「{second['name']}」"
+                    f"({second_share:.0f}%)が中心で、特定の事業に極端に依存しない構成です。"
+                )
+
+            profitable = [s for s in ranked if s.get("profit") is not None and s.get("revenue")]
+            if len(profitable) >= 2:
+                margins = [(s["name"], s["profit"] / s["revenue"] * 100) for s in profitable]
+                best = max(margins, key=lambda x: x[1])
+                worst = min(margins, key=lambda x: x[1])
+                if best[0] != worst[0] and best[1] - worst[1] >= 1:
+                    lines.append(
+                        f"利益率で見ると「{best[0]}」({best[1]:.1f}%)が「{worst[0]}」"
+                        f"({worst[1]:.1f}%)より高く、稼ぎ頭になっています。"
+                    )
+
+    if quarterly_analysis:
+        latest_q = quarterly_analysis[-1]
+        yoy = latest_q.get("yoy_revenue")
+        if yoy is not None:
+            direction = "増収" if yoy > 0 else ("減収" if yoy < 0 else "横ばい")
+            lines.append(
+                f"直近四半期({latest_q['period']})の売上高は前年同期比{yoy:+.1f}%と{direction}でした。"
+            )
+
+    return " ".join(lines) if lines else None
+
+
 def build_summary(*, company_name: str, asset_type: dict, profit_type: dict,
                    cyclical_type: dict, grades: list[dict], a_grade_items: list[str],
                    danger_flags: list[dict]) -> str:
