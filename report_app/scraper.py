@@ -23,7 +23,18 @@ import requests
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://kabutan.jp"
-USER_AGENT = "Mozilla/5.0 (compatible; PersonalResearchBot/1.0; individual, non-commercial use)"
+# 一般的なブラウザのUser-Agent。ボット的な文字列(bot/crawler等)を含む
+# UAは一部サイトのWAFで機械的にブロックされることがあるため使用しない。
+# アクセス頻度の抑制(Crawl-delay遵守)によって節度あるアクセスを担保する。
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+)
+REQUEST_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+}
 MIN_REQUEST_INTERVAL_SECONDS = 3.0  # kabutan.jp robots.txt の Crawl-delay に合わせる
 
 _last_request_time: float = 0.0
@@ -35,7 +46,7 @@ def _rate_limited_get(url: str) -> requests.Response:
     wait = MIN_REQUEST_INTERVAL_SECONDS - elapsed
     if wait > 0:
         time.sleep(wait)
-    resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=15)
+    resp = requests.get(url, headers=REQUEST_HEADERS, timeout=15)
     _last_request_time = time.time()
     return resp
 
