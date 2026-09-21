@@ -182,11 +182,6 @@ FIELD_TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
     "intangible_fixed_assets": [("jppfs_cor", "IntangibleAssets"), ("jpigp_cor", "IntangibleAssetsIFRS")],
     "investments_other": [("jppfs_cor", "InvestmentsAndOtherAssets"), ("jpigp_cor", "InvestmentsAccountedForUsingEquityMethodIFRS")],
     "cash_and_deposits": [("jppfs_cor", "CashAndDeposits"), ("jpigp_cor", "CashAndCashEquivalentsIFRS")],
-    "receivables": [
-        ("jppfs_cor", "NotesAndAccountsReceivableTradeAndContractAssets"),
-        ("jppfs_cor", "NotesAndAccountsReceivableTrade"),
-        ("jpigp_cor", "TradeAndOtherReceivablesCAIFRS"),
-    ],
     "securities": [("jppfs_cor", "InvestmentSecurities"), ("jpigp_cor", "OtherFinancialAssetsCAIFRS")],
     "goodwill": [("jppfs_cor", "Goodwill"), ("jpigp_cor", "GoodwillIFRS")],
 }
@@ -195,6 +190,18 @@ INVENTORY_SINGLE_TAG_CANDIDATES = [("jppfs_cor", "Inventories"), ("jpigp_cor", "
 INVENTORY_JGAAP_SUM_TAGS = [
     "MerchandiseAndFinishedGoods", "Merchandise", "FinishedGoods",
     "WorkInProcess", "RawMaterialsAndSupplies", "SemiFinishedGoods",
+]
+
+# 受取手形・売掛金: 1本の合算タグで開示する会社と、手形/売掛金を別タグに
+# 分けて開示する会社があるため、両方に対応する。
+RECEIVABLES_SINGLE_TAG_CANDIDATES = [
+    ("jppfs_cor", "NotesAndAccountsReceivableTradeAndContractAssets"),
+    ("jppfs_cor", "NotesAndAccountsReceivableTrade"),
+    ("jpigp_cor", "TradeAndOtherReceivablesCAIFRS"),
+]
+RECEIVABLES_JGAAP_SUM_TAGS = [
+    "NotesReceivableTrade", "AccountsReceivableTrade",
+    "ElectronicallyRecordedMonetaryClaimsOperating",
 ]
 
 INTEREST_BEARING_DEBT_JGAAP_SUM_TAGS = [
@@ -216,6 +223,11 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     if inventory is None:
         inventory = _sum_available(facts, "jppfs_cor", INVENTORY_JGAAP_SUM_TAGS)
     result["inventory"] = inventory
+
+    receivables = _first_available(facts, RECEIVABLES_SINGLE_TAG_CANDIDATES)
+    if receivables is None:
+        receivables = _sum_available(facts, "jppfs_cor", RECEIVABLES_JGAAP_SUM_TAGS)
+    result["receivables"] = receivables
 
     debt = _sum_available(facts, "jpigp_cor", INTEREST_BEARING_DEBT_IFRS_TAGS)
     if debt is None:
