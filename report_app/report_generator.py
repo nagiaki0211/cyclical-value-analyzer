@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import calendar
 import datetime
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from report_app import classifier, grading, metrics, scraper, summary, valuation
+from report_app import classifier, edinet, grading, metrics, scraper, summary, valuation
+from report_app.edinet_config import get_edinet_api_key
 from report_app.manual_input import load_or_create_manual_data
 from report_app.svg_chart import bar_chart_svg
 
@@ -25,6 +27,8 @@ GLOSSARY = {
     "フリーキャッシュフロー(FCF)": "本業で稼いだお金から、設備投資などに使ったお金を差し引いた、自由に使えるお金。",
     "ネットキャッシュ": "現金・預金や有価証券などすぐに使えるお金から、借金(有利子負債)を差し引いた金額。",
     "グレアムの公式": "PER×PBRが22.5以下であれば割安、という株式投資の古典的な目安。",
+    "EDINET": "金融庁が運営する、上場企業の有価証券報告書等を無料で公開している公式システム。",
+    "有価証券報告書": "上場企業が年に1度、決算内容を詳しく開示する法定書類(通称「有報」)。決算短信より詳細な貸借対照表の内訳等が含まれる。",
 }
 
 
@@ -47,6 +51,52 @@ def _build_annual_series(company_data: scraper.CompanyData) -> dict:
     }
 
 
+def _period_to_fiscal_year_end(period: str) -> datetime.date | None:
+    """"2026.03" のような決算期文字列を、その月の末日のdateに変換する。"""
+    try:
+        year, month = (int(p) for p in period.split("."))
+        last_day = calendar.monthrange(year, month)[1]
+        return datetime.date(year, month, last_day)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _enrich_manual_data_with_edinet(code: str, manual: dict, latest_period: str | None, latest: dict) -> dict:
+    """
+    EDINET APIキーが設定されている場合、有価証券報告書から貸借対照表の
+    内訳を自動取得し、manual_data で未入力(null)の項目のみを補完する。
+    ユーザーが手入力済みの値は上書きしない。APIキー未設定時や取得失敗時は
+    何もせず manual をそのまま返す(呼び出し側の処理は変わらない)。
+    """
+    api_key = get_edinet_api_key()
+    if not api_key or not latest_period:
+        return manual
+
+    fy_end = _period_to_fiscal_year_end(latest_period)
+    if not fy_end:
+        return manual
+
+    detail = edinet.fetch_balance_sheet_detail_via_edinet(code, fy_end, latest.get("revenue"), api_key)
+    if not detail:
+        return manual
+
+    manual = dict(manual)
+    filled_fields = []
+    for key, value in detail.items():
+        if key.startswith("_"):
+            continue
+        if value is not None and manual.get(key) is None:
+            manual[key] = value
+            filled_fields.append(key)
+
+    manual["_edinet_source"] = {
+        "doc_id": detail.get("_edinet_doc_id"),
+        "submit_date": detail.get("_edinet_submit_date"),
+        "filled_fields": filled_fields,
+    }
+    return manual
+
+
 def generate_report(code: str) -> Path:
     company_data = scraper.fetch_company_data(code)
     manual = load_or_create_manual_data(code)
@@ -54,6 +104,8 @@ def generate_report(code: str) -> Path:
     merged = metrics.merge_periods(company_data)
     latest_period = metrics.latest_actual_period(merged)
     latest = merged.get(latest_period, {}) if latest_period else {}
+
+    manual = _enrich_manual_data_with_edinet(code, manual, latest_period, latest)
 
     health_metrics = metrics.compute_health_metrics(latest, manual)
     profitability_metrics = metrics.compute_profitability_metrics(latest, manual)
@@ -135,6 +187,7 @@ def generate_report(code: str) -> Path:
         charts=charts,
         glossary=GLOSSARY,
         manual=manual,
+        edinet_source=manual.get("_edinet_source"),
         market_cap_oku=market_cap_oku,
     )
 

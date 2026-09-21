@@ -20,6 +20,10 @@ watchlist_data.json
 # 個別銘柄・企業分析レポート生成アプリ: 生成物と手入力データ
 output/*.html
 manual_data/*.json
+report_app/.cache/
+
+# APIキー等の秘密情報
+.env
 
 # OS / エディタ
 .DS_Store

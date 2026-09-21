@@ -141,9 +141,18 @@
       </tr>
       {% endfor %}
     </table>
+    {% if edinet_source and edinet_source.filled_fields %}
+    <p class="note" style="color:var(--good);">
+      流動資産・固定資産等の内訳は、EDINETの有価証券報告書(提出日: {{ edinet_source.submit_date }}、
+      書類ID: {{ edinet_source.doc_id }})から自動取得しました。
+      未入力の項目のみ manual_data/{{ company.code }}.json で追加入力できます。
+    </p>
+    {% else %}
     <p class="note">流動資産・固定資産等の内訳は株探の無料ページでは取得できないため、
       manual_data/{{ company.code }}.json での手入力補完が必要です(未入力の場合、
-      流動比率・当座比率・固定比率・清算価値は「データ不足」と表示されます)。</p>
+      流動比率・当座比率・固定比率・清算価値は「データ不足」と表示されます)。
+      EDINET_API_KEY を設定すると、有価証券報告書から自動取得を試みます。</p>
+    {% endif %}
 
     <h3>キャッシュフロー推移</h3>
     {{ charts.cf_chart|safe }}
@@ -238,6 +247,14 @@
     {% if liquidation.missing_fields %}
     <p class="note">清算価値の算出には以下の項目が不足しています: {{ liquidation.missing_fields|join("、") }}
       (manual_data/{{ company.code }}.json に入力してください)</p>
+    {% endif %}
+    {% if liquidation.low_coverage_warning %}
+    <p class="note" style="color:var(--warn);">
+      ⚠ 注意: 資産区分(現金・売掛金・棚卸資産・固定資産等)の合計が、
+      総資産のかなりの部分をカバーできていません。金融子会社を持つ会社など、
+      標準的な製造業モデルの区分に当てはまらない資産(金融債権等)が多い場合に
+      起こります。清算価値は実態より低く算出されている可能性があります。
+    </p>
     {% endif %}
     {% if liquidation.value is not none and company.market_cap is not none %}
     <p>{% if company.market_cap < liquidation.value %}

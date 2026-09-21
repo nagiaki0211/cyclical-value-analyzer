@@ -22,6 +22,12 @@ ASSET_HAIRCUTS = {
 }
 
 
+# このカバー率を下回ると、資産区分の一部(金融子会社の金融債権等、
+# 標準的な製造業モデルの区分に当てはまらない資産)が漏れている可能性が
+# あるとみなし、レポート上で注意喚起する。
+ASSET_COVERAGE_WARNING_THRESHOLD = 0.85
+
+
 def compute_liquidation_value(manual: dict) -> dict:
     """清算価値 = 修正資産 − 総負債。"""
     missing = [k for k in ASSET_HAIRCUTS if manual.get(k) is None]
@@ -32,13 +38,25 @@ def compute_liquidation_value(manual: dict) -> dict:
             "value": None,
             "adjusted_assets": None,
             "missing_fields": missing + (["total_liabilities"] if total_liabilities is None else []),
+            "low_coverage_warning": False,
         }
 
+    raw_asset_total = sum(manual[k] for k in ASSET_HAIRCUTS)
     adjusted_assets = sum(manual[k] * haircut for k, haircut in ASSET_HAIRCUTS.items())
+
+    current_assets = manual.get("current_assets")
+    fixed_assets = manual.get("fixed_assets")
+    low_coverage_warning = False
+    if current_assets is not None and fixed_assets is not None:
+        total_assets = current_assets + fixed_assets
+        if total_assets > 0 and raw_asset_total / total_assets < ASSET_COVERAGE_WARNING_THRESHOLD:
+            low_coverage_warning = True
+
     return {
         "value": adjusted_assets - total_liabilities,
         "adjusted_assets": adjusted_assets,
         "missing_fields": [],
+        "low_coverage_warning": low_coverage_warning,
     }
 
 
