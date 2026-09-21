@@ -42,6 +42,9 @@ TEMPLATE = {
     "interest_bearing_debt": None,
     # 損益計算書の補完項目
     "gross_profit": None,
+    "depreciation_amortization": None,  # 減価償却費(EV/EBITDA計算用)
+    "income_taxes": None,  # 法人税等(ROIC用の実効税率算出に使用)
+    "income_before_taxes": None,  # 税引前当期純利益(同上)
     # 危険信号フラグ判定の補助情報
     "capital_increase_notes": None,  # 増資履歴に関するメモ(第三者割当増資の有無等)
     "receivables_prev_year": None,  # 前年の売掛金(急増チェック用)

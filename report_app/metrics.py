@@ -76,6 +76,19 @@ def _safe_div(numerator, denominator, multiplier=1.0):
     return numerator / denominator * multiplier
 
 
+# 各指標の合否判定基準(仕様書 6-2 節の「健全ライン」「良好ライン」に対応)。
+# grading.py の7項目評価も、ここで付与する "ok" 判定を集計して使う
+# (基準値を一箇所にまとめ、指標表と評価の不整合を防ぐため)。
+_JUDGE_GE = "ge"  # 値が基準以上なら良好
+_JUDGE_LE = "le"  # 値が基準以下なら良好
+
+
+def _judge(value: float | None, direction: str, threshold: float) -> bool | None:
+    if value is None:
+        return None
+    return value >= threshold if direction == _JUDGE_GE else value <= threshold
+
+
 def compute_health_metrics(latest: dict, manual: dict) -> dict:
     """健全性指標(仕様書 6-2 ①)。"""
     current_assets = manual.get("current_assets")
@@ -93,31 +106,42 @@ def compute_health_metrics(latest: dict, manual: dict) -> dict:
             manual["cash_and_deposits"] + manual["receivables"] + manual["securities"]
         )
 
+    equity_ratio_value = latest.get("equity_ratio")
+    debt_ratio_value = _safe_div(total_liabilities, equity, 100)
+    current_ratio_value = _safe_div(current_assets, current_liabilities, 100)
+    quick_ratio_value = _safe_div(quick_assets, current_liabilities, 100)
+    fixed_ratio_value = _safe_div(fixed_assets, equity, 100)
+
     return {
         "equity_ratio": {
-            "value": latest.get("equity_ratio"),
+            "value": equity_ratio_value,
             "healthy": "40%以上",
             "danger": "20%以下",
+            "ok": _judge(equity_ratio_value, _JUDGE_GE, 40),
         },
         "debt_ratio": {
-            "value": _safe_div(total_liabilities, equity, 100),
+            "value": debt_ratio_value,
             "healthy": "200%以下",
             "danger": "300%以上",
+            "ok": _judge(debt_ratio_value, _JUDGE_LE, 200),
         },
         "current_ratio": {
-            "value": _safe_div(current_assets, current_liabilities, 100),
+            "value": current_ratio_value,
             "healthy": "100%以上",
             "danger": "100%未満",
+            "ok": _judge(current_ratio_value, _JUDGE_GE, 100),
         },
         "quick_ratio": {
-            "value": _safe_div(quick_assets, current_liabilities, 100),
+            "value": quick_ratio_value,
             "healthy": "100%以上",
             "danger": None,
+            "ok": _judge(quick_ratio_value, _JUDGE_GE, 100),
         },
         "fixed_ratio": {
-            "value": _safe_div(fixed_assets, equity, 100),
+            "value": fixed_ratio_value,
             "healthy": "100%以下",
             "danger": "100%超",
+            "ok": _judge(fixed_ratio_value, _JUDGE_LE, 100),
         },
     }
 
@@ -125,30 +149,43 @@ def compute_health_metrics(latest: dict, manual: dict) -> dict:
 def compute_profitability_metrics(latest: dict, manual: dict) -> dict:
     """収益性指標(仕様書 6-2 ②)。"""
     revenue = latest.get("revenue")
+    gross_margin_value = _safe_div(manual.get("gross_profit"), revenue, 100)
+    operating_margin_value = _safe_div(latest.get("operating_income"), revenue, 100)
+    ordinary_margin_value = _safe_div(latest.get("ordinary_income"), revenue, 100)
+    net_margin_value = _safe_div(latest.get("net_income"), revenue, 100)
+    roe_value = _safe_div(latest.get("net_income"), latest.get("equity"), 100)
+    roa_value = _safe_div(latest.get("net_income"), latest.get("total_assets"), 100)
+
     return {
         "gross_margin": {
-            "value": _safe_div(manual.get("gross_profit"), revenue, 100),
+            "value": gross_margin_value,
             "good": "20〜40%(業界による)",
+            "ok": _judge(gross_margin_value, _JUDGE_GE, 20),
         },
         "operating_margin": {
-            "value": _safe_div(latest.get("operating_income"), revenue, 100),
+            "value": operating_margin_value,
             "good": "5%以上=健全、10%以上=高収益",
+            "ok": _judge(operating_margin_value, _JUDGE_GE, 5),
         },
         "ordinary_margin": {
-            "value": _safe_div(latest.get("ordinary_income"), revenue, 100),
+            "value": ordinary_margin_value,
             "good": "営業利益率と大きく乖離しない",
+            "ok": None,  # 定量的な合否基準ではなく、定性的な比較のため判定なし
         },
         "net_margin": {
-            "value": _safe_div(latest.get("net_income"), revenue, 100),
+            "value": net_margin_value,
             "good": "5%以上=優良、3%以下=薄利経営",
+            "ok": _judge(net_margin_value, _JUDGE_GE, 5),
         },
         "roe": {
-            "value": _safe_div(latest.get("net_income"), latest.get("equity"), 100),
+            "value": roe_value,
             "good": "10%以上=優秀、5%以下=低収益",
+            "ok": _judge(roe_value, _JUDGE_GE, 10),
         },
         "roa": {
-            "value": _safe_div(latest.get("net_income"), latest.get("total_assets"), 100),
+            "value": roa_value,
             "good": "5%以上=効率的",
+            "ok": _judge(roa_value, _JUDGE_GE, 5),
         },
     }
 
@@ -158,11 +195,11 @@ def compute_growth_metrics(merged: dict[str, dict], manual: dict) -> dict:
     periods = ordered_actual_periods(merged)
     if len(periods) < 2:
         return {
-            "revenue_growth": {"value": None},
-            "operating_income_growth": {"value": None},
-            "net_income_growth": {"value": None},
-            "asset_turnover": {"value": None},
-            "receivables_turnover": {"value": None},
+            "revenue_growth": {"value": None, "good": "10%以上=成長企業", "ok": None},
+            "operating_income_growth": {"value": None, "good": "プラス成長が望ましい", "ok": None},
+            "net_income_growth": {"value": None, "good": "安定成長が理想", "ok": None},
+            "asset_turnover": {"value": None, "good": "1.0回以上が理想(業界による)", "ok": None},
+            "receivables_turnover": {"value": None, "good": "回数が多いほど資金繰り良好", "ok": None},
         }
     prev, curr = merged[periods[-2]], merged[periods[-1]]
 
@@ -173,17 +210,36 @@ def compute_growth_metrics(merged: dict[str, dict], manual: dict) -> dict:
             100,
         )
 
+    revenue_growth_value = growth("revenue")
+    operating_income_growth_value = growth("operating_income")
+    net_income_growth_value = growth("net_income")
+    asset_turnover_value = _safe_div(curr.get("revenue"), curr.get("total_assets"))
+
     return {
-        "revenue_growth": {"value": growth("revenue"), "good": "10%以上=成長企業"},
-        "operating_income_growth": {"value": growth("operating_income"), "good": "プラス成長が望ましい"},
-        "net_income_growth": {"value": growth("net_income"), "good": "安定成長が理想"},
+        "revenue_growth": {
+            "value": revenue_growth_value,
+            "good": "10%以上=成長企業",
+            "ok": _judge(revenue_growth_value, _JUDGE_GE, 10),
+        },
+        "operating_income_growth": {
+            "value": operating_income_growth_value,
+            "good": "プラス成長が望ましい",
+            "ok": _judge(operating_income_growth_value, _JUDGE_GE, 0),
+        },
+        "net_income_growth": {
+            "value": net_income_growth_value,
+            "good": "安定成長が理想",
+            "ok": _judge(net_income_growth_value, _JUDGE_GE, 0),
+        },
         "asset_turnover": {
-            "value": _safe_div(curr.get("revenue"), curr.get("total_assets")),
+            "value": asset_turnover_value,
             "good": "1.0回以上が理想(業界による)",
+            "ok": _judge(asset_turnover_value, _JUDGE_GE, 1.0),
         },
         "receivables_turnover": {
             "value": _safe_div(curr.get("revenue"), manual.get("receivables")),
             "good": "回数が多いほど資金繰り良好",
+            "ok": None,  # 絶対的な合否基準が無いため判定なし
         },
     }
 
@@ -293,3 +349,46 @@ def compute_danger_flags(merged: dict[str, dict], manual: dict) -> list[dict]:
     )
 
     return flags
+
+
+def compute_quarterly_analysis(quarterly_performance: list[dict]) -> list[dict]:
+    """
+    直近8四半期(単独の3か月間)の実績に、以下を付与する。
+
+    - 前年同期比(YoY): 4四半期前(=前年の同じ3か月間)との比較。
+      季節性(繁忙期・閑散期)の影響を受けにくいため、四半期比較の基本とする。
+    - 前期比(QoQ): 直前の四半期との比較。季節性の強い事業では
+      解釈に注意が必要(参考情報として併記する)。
+    - 直近12か月累計(TTM, Trailing Twelve Months): 直近4四半期の合計。
+      四半期ごとのノイズや季節性を均して、業績のトレンドを見るのに使う。
+    """
+    records = list(quarterly_performance)
+    result = []
+    for i, rec in enumerate(records):
+        enriched = dict(rec)
+
+        prev_q = records[i - 1] if i >= 1 else None
+        prev_y = records[i - 4] if i >= 4 else None
+
+        for key in ("revenue", "operating_income", "net_income"):
+            enriched[f"qoq_{key}"] = _safe_div(
+                None if prev_q is None or rec.get(key) is None or prev_q.get(key) is None
+                else rec[key] - prev_q[key],
+                prev_q.get(key) if prev_q else None,
+                100,
+            )
+            enriched[f"yoy_{key}"] = _safe_div(
+                None if prev_y is None or rec.get(key) is None or prev_y.get(key) is None
+                else rec[key] - prev_y[key],
+                prev_y.get(key) if prev_y else None,
+                100,
+            )
+            if i >= 3:
+                last4 = records[i - 3 : i + 1]
+                values = [r.get(key) for r in last4]
+                enriched[f"ttm_{key}"] = sum(values) if all(v is not None for v in values) else None
+            else:
+                enriched[f"ttm_{key}"] = None
+
+        result.append(enriched)
+    return result

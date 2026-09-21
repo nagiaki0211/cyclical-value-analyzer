@@ -12,34 +12,24 @@
 
 from __future__ import annotations
 
-HEALTH_PASS = {
-    "equity_ratio": ("ge", 40),
-    "debt_ratio": ("le", 200),
-    "current_ratio": ("ge", 100),
-    "quick_ratio": ("ge", 100),
-    "fixed_ratio": ("le", 100),
-}
-
-PROFITABILITY_PASS = {
-    "gross_margin": ("ge", 20),
-    "operating_margin": ("ge", 5),
-    "net_margin": ("ge", 5),
-    "roe": ("ge", 10),
-    "roa": ("ge", 5),
-}
-
-GROWTH_PASS = {
-    "revenue_growth": ("ge", 10),
-    "operating_income_growth": ("ge", 0),
-    "net_income_growth": ("ge", 0),
-    "asset_turnover": ("ge", 1.0),
-}
-
-
-def _passes(value: float | None, direction: str, threshold: float) -> bool | None:
-    if value is None:
-        return None
-    return value >= threshold if direction == "ge" else value <= threshold
+# レポートに表示する評価基準の説明文。
+# 項目1〜5は「良好とされる基準をどれだけ満たすか」の比率で判定する
+# (下記の割合はいずれも grade_from_ratio の閾値と一致させている)。
+GRADE_DEFINITIONS = [
+    {"grade": "A", "desc": "良好とされる基準の80%以上を満たす(非常に高い水準)"},
+    {"grade": "B", "desc": "良好とされる基準の60%以上80%未満を満たす(高い水準)"},
+    {"grade": "C", "desc": "良好とされる基準の40%以上60%未満を満たす(平均的な水準)"},
+    {"grade": "D", "desc": "良好とされる基準の20%以上40%未満を満たす(やや低い水準)"},
+    {"grade": "E", "desc": "良好とされる基準の20%未満しか満たさない(低い水準)"},
+]
+GRADE_NOTES = (
+    "項目1・2(資産/収益力から見た割安性)はPBR・PER・DCF等の複数指標を"
+    "0〜2点でスコア化し、その合計割合で判定します。項目3〜5(財務健全性・"
+    "収益性・成長性)は、該当する各指標が基準を満たすかどうかの割合で判定します。"
+    "項目6(事業素質)は定性情報のため自動評価しません。項目7(株主重視姿勢)は"
+    "配当性向が20〜50%の範囲であればA、それ以外の配当ありはC、無配はEとする"
+    "簡易ルールで判定します。"
+)
 
 
 def grade_from_ratio(ratio: float | None) -> str | None:
@@ -56,15 +46,14 @@ def grade_from_ratio(ratio: float | None) -> str | None:
     return "E"
 
 
-def _grade_from_metric_group(metrics: dict, pass_rules: dict) -> dict:
-    evaluated = 0
-    passed = 0
-    for key, (direction, threshold) in pass_rules.items():
-        value = metrics.get(key, {}).get("value")
-        result = _passes(value, direction, threshold)
-        if result is not None:
-            evaluated += 1
-            passed += int(result)
+def _grade_from_metric_group(metrics: dict) -> dict:
+    """
+    metrics 内の各指標が持つ "ok" (True/False/判定不可はNone、
+    metrics.py で算出済み)を集計してA〜Eを決める。
+    基準値そのものは metrics.py 側に一元化している。
+    """
+    evaluated = sum(1 for m in metrics.values() if m.get("ok") is not None)
+    passed = sum(1 for m in metrics.values() if m.get("ok") is True)
     ratio = passed / evaluated if evaluated else None
     return {"grade": grade_from_ratio(ratio), "passed": passed, "evaluated": evaluated}
 
@@ -97,15 +86,15 @@ def grade_earnings_value(per: float | None, market_cap: float | None, dcf: dict)
 
 
 def grade_financial_health(health_metrics: dict) -> dict:
-    return _grade_from_metric_group(health_metrics, HEALTH_PASS)
+    return _grade_from_metric_group(health_metrics)
 
 
 def grade_profitability(profitability_metrics: dict) -> dict:
-    return _grade_from_metric_group(profitability_metrics, PROFITABILITY_PASS)
+    return _grade_from_metric_group(profitability_metrics)
 
 
 def grade_growth(growth_metrics: dict) -> dict:
-    return _grade_from_metric_group(growth_metrics, GROWTH_PASS)
+    return _grade_from_metric_group(growth_metrics)
 
 
 def grade_business_quality(manual: dict) -> dict:

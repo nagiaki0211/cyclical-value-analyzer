@@ -93,6 +93,7 @@ class CompanyData:
     pbr: float | None = None
     dividend_yield: float | None = None
     annual_performance: list[dict] = field(default_factory=list)  # 業績推移(百万円)
+    quarterly_performance: list[dict] = field(default_factory=list)  # 直近8四半期(単独, 百万円)
     financial_position: list[dict] = field(default_factory=list)  # 財務(百万円)
     cashflow: list[dict] = field(default_factory=list)  # CF推移(百万円)
     fetch_errors: list[str] = field(default_factory=list)
@@ -186,6 +187,43 @@ def _rows_to_records(rows: list[list[str]], key_names: list[str]) -> list[dict]:
     return records
 
 
+def _parse_quarterly_performance(soup: BeautifulSoup, data: CompanyData) -> None:
+    """
+    直近8四半期(単独の3か月間、累計ではない)の業績を取得する。
+    「第１四半期累計決算【実績】」セクション配下の「業績推移」表がこれにあたる
+    (通期の「業績推移」と同じ見出し名のため、アンカーを起点に検索する)。
+    """
+    anchor = soup.find(
+        lambda tag: tag.name in ("h2", "h3") and tag.get_text(strip=True) == "第１四半期累計決算【実績】"
+    )
+    if not anchor:
+        return
+    heading = anchor.find_next(lambda tag: tag.name == "h3" and tag.get_text(strip=True) == "業績推移")
+    if not heading:
+        return
+    tbl = heading.find_next("table")
+    if not tbl:
+        return
+
+    keys = ["period", "revenue", "operating_income", "ordinary_income", "net_income", "eps", "op_margin", "announced_on"]
+    records = []
+    for tr in tbl.find_all("tr"):
+        cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"])]
+        if len(cells) < len(keys):
+            continue
+        period = cells[0]
+        if not re.match(r"^\d{2}\.\d{2}-\d{2}$", period):
+            continue  # ヘッダー行・空行を除外
+        record = {"period": period}
+        for key, val in zip(keys[1:], cells[1:]):
+            record[key] = _to_number(val)
+        records.append(record)
+
+    data.quarterly_performance = records
+    if not records:
+        data.fetch_errors.append("四半期業績データを取得できませんでした")
+
+
 def _parse_annual_performance(soup: BeautifulSoup, data: CompanyData) -> None:
     rows = _parse_table_after_heading(soup, "業績推移")
     keys = ["period", "revenue", "operating_income", "ordinary_income", "net_income", "eps", "dps", "announced_on"]
@@ -247,6 +285,7 @@ def fetch_company_data(code: str) -> CompanyData:
         data.fetch_errors.append(f"決算ページの取得に失敗しました(HTTP {finance_resp.status_code})")
         return data
     _parse_annual_performance(finance_soup, data)
+    _parse_quarterly_performance(finance_soup, data)
     _parse_financial_position(finance_soup, data)
     _parse_cashflow(finance_soup, data)
 

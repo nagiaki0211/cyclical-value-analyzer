@@ -53,6 +53,10 @@
   footer { text-align:center; color:var(--muted); font-size:0.8em; margin-top:30px; }
   .missing { color:var(--muted); font-style:italic; }
   svg text { font-size:11px; }
+  .unit-note { color:var(--muted); font-size:0.8em; font-weight:400; }
+  .advice-box { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px 16px; margin:10px 0; font-size:0.92em; }
+  .grade-def-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin:10px 0; }
+  .grade-def-item { display:flex; align-items:flex-start; gap:8px; font-size:0.88em; }
 </style>
 </head>
 <body>
@@ -90,7 +94,14 @@
       <div class="kpi"><div class="label">PER</div><div class="value">{{ company.per if company.per is not none else "―" }} 倍</div></div>
       <div class="kpi"><div class="label">PBR</div><div class="value">{{ company.pbr if company.pbr is not none else "―" }} 倍</div></div>
       <div class="kpi"><div class="label">配当利回り</div><div class="value">{{ company.dividend_yield if company.dividend_yield is not none else "―" }} %</div></div>
+      <div class="kpi"><div class="label">PSR</div><div class="value">{{ "%.2f"|format(valuation_ratios.psr) if valuation_ratios.psr is not none else "―" }} 倍</div></div>
+      <div class="kpi"><div class="label">PCFR</div><div class="value">{{ "%.2f"|format(valuation_ratios.pcfr) if valuation_ratios.pcfr is not none else "―" }} 倍</div></div>
+      <div class="kpi"><div class="label">EV/EBITDA</div><div class="value">{{ "%.2f"|format(valuation_ratios.ev_ebitda) if valuation_ratios.ev_ebitda is not none else "―" }} 倍</div></div>
     </div>
+    <p class="note">
+      PSR・PCFR・EV/EBITDAは、赤字企業や減価償却の大きい設備投資型企業でPERが機能しない場合の補助指標です。
+      {% if valuation_ratios.ev_ebitda is none %}EV/EBITDAの算出には減価償却費・有利子負債・現金のデータが必要です(manual_dataまたはEDINET連携で補完してください)。{% endif %}
+    </p>
   </section>
 
   <section class="card">
@@ -106,7 +117,7 @@
   </section>
 
   <section class="card">
-    <h2>3. 業績推移</h2>
+    <h2>3. 業績推移(通期) <span class="unit-note">(単位: 百万円。1株益・1株配のみ円)</span></h2>
     {{ charts.revenue_chart|safe }}
     {{ charts.profit_chart|safe }}
     <table>
@@ -126,9 +137,68 @@
     <p class="note">単位: 百万円(1株益・1株配のみ円)。出典: 株探(kabutan.jp)。</p>
   </section>
 
+  {% if quarterly_analysis %}
   <section class="card">
-    <h2>4. 財務諸表の要約</h2>
-    <h3>貸借対照表(要約)</h3>
+    <h2>4. 四半期業績の推移(直近8四半期) <span class="unit-note">(単位: 百万円)</span></h2>
+    <div class="advice-box">
+      <strong>プロ投資家目線のアドバイス:</strong> {{ quarterly_advice }}
+    </div>
+    {{ charts.quarterly_chart|safe }}
+    <table>
+      <tr>
+        <th>四半期</th><th>売上高</th><th>前年同期比</th><th>前期比</th>
+        <th>営業利益</th><th>前年同期比</th>
+        <th>純利益</th><th>前年同期比</th>
+        <th>売上高TTM</th>
+      </tr>
+      {% for r in quarterly_analysis %}
+      <tr>
+        <td>{{ r.period }}</td>
+        <td>{{ "{:,.0f}".format(r.revenue) if r.revenue is not none else "―" }}</td>
+        <td>{% if r.yoy_revenue is not none %}{{ "%+.1f"|format(r.yoy_revenue) }}%{% else %}―{% endif %}</td>
+        <td>{% if r.qoq_revenue is not none %}{{ "%+.1f"|format(r.qoq_revenue) }}%{% else %}―{% endif %}</td>
+        <td>{{ "{:,.0f}".format(r.operating_income) if r.operating_income is not none else "―" }}</td>
+        <td>{% if r.yoy_operating_income is not none %}{{ "%+.1f"|format(r.yoy_operating_income) }}%{% else %}―{% endif %}</td>
+        <td>{{ "{:,.0f}".format(r.net_income) if r.net_income is not none else "―" }}</td>
+        <td>{% if r.yoy_net_income is not none %}{{ "%+.1f"|format(r.yoy_net_income) }}%{% else %}―{% endif %}</td>
+        <td>{% if r.ttm_revenue is not none %}{{ "{:,.0f}".format(r.ttm_revenue) }}{% else %}<span class="missing">計算中</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="note">
+      前年同期比(YoY) = 4四半期前(1年前の同じ時期)との比較。前期比(QoQ) = 直前の四半期との比較。
+      TTM(直近12か月累計) = 直近4四半期の合計(算出には4四半期分のデータが必要)。出典: 株探(kabutan.jp)。
+    </p>
+  </section>
+  {% endif %}
+
+  {% if segments %}
+  <section class="card">
+    <h2>5. 事業セグメント別の売上高・利益 <span class="unit-note">(単位: 百万円)</span></h2>
+    <p class="note">
+      どの事業が稼ぎ頭かを確認できます。出典: EDINET(有価証券報告書のセグメント情報注記)。
+      セグメント名・区分は会社が独自に設定しているため、他社と単純比較はできません。
+    </p>
+    {{ charts.segment_chart|safe }}
+    <table>
+      <tr><th>セグメント</th><th>売上高</th><th>セグメント利益</th><th>セグメント利益率</th></tr>
+      {% for s in segments %}
+      <tr>
+        <td>{{ s.name }}</td>
+        <td>{{ "{:,.0f}".format(s.revenue) if s.revenue is not none else "―" }}</td>
+        <td>{{ "{:,.0f}".format(s.profit) if s.profit is not none else "―" }}</td>
+        <td>
+          {% if s.revenue and s.profit is not none %}{{ "%.1f"|format(s.profit / s.revenue * 100) }}%{% else %}―{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <h2>6. 財務諸表の要約</h2>
+    <h3>貸借対照表(要約) <span class="unit-note">(単位: 百万円)</span></h3>
     <table>
       <tr><th>決算期</th><th>総資産</th><th>自己資本</th><th>自己資本比率</th><th>剰余金</th></tr>
       {% for r in company.financial_position %}
@@ -154,7 +224,7 @@
       EDINET_API_KEY を設定すると、有価証券報告書から自動取得を試みます。</p>
     {% endif %}
 
-    <h3>キャッシュフロー推移</h3>
+    <h3>キャッシュフロー推移 <span class="unit-note">(単位: 百万円)</span></h3>
     {{ charts.cf_chart|safe }}
     <table>
       <tr><th>決算期</th><th>営業CF</th><th>投資CF</th><th>財務CF</th><th>現金等残高</th></tr>
@@ -171,37 +241,62 @@
   </section>
 
   <section class="card">
-    <h2>5. 財務指標</h2>
+    <h2>7. 財務指標</h2>
+    <p class="note">「判定」列は、各指標が目安・健全ラインを満たすか(OK)を機械的に判定したものです。「―」は絶対的な合否基準が無い指標です。</p>
 
     <h3>① 健全性</h3>
     <table>
-      <tr><th>指標</th><th>値</th><th>健全ライン</th><th>危険ライン</th></tr>
-      <tr><td>自己資本比率</td><td>{{ "%.1f"|format(health_metrics.equity_ratio.value) if health_metrics.equity_ratio.value is not none else "―" }}%</td><td>{{ health_metrics.equity_ratio.healthy }}</td><td>{{ health_metrics.equity_ratio.danger }}</td></tr>
-      <tr><td>負債比率</td><td>{{ "%.1f"|format(health_metrics.debt_ratio.value) if health_metrics.debt_ratio.value is not none else "データ不足" }}{% if health_metrics.debt_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.debt_ratio.healthy }}</td><td>{{ health_metrics.debt_ratio.danger }}</td></tr>
-      <tr><td>流動比率</td><td>{{ "%.1f"|format(health_metrics.current_ratio.value) if health_metrics.current_ratio.value is not none else "データ不足" }}{% if health_metrics.current_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.current_ratio.healthy }}</td><td>{{ health_metrics.current_ratio.danger }}</td></tr>
-      <tr><td>当座比率</td><td>{{ "%.1f"|format(health_metrics.quick_ratio.value) if health_metrics.quick_ratio.value is not none else "データ不足" }}{% if health_metrics.quick_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.quick_ratio.healthy }}</td><td>―</td></tr>
-      <tr><td>固定比率</td><td>{{ "%.1f"|format(health_metrics.fixed_ratio.value) if health_metrics.fixed_ratio.value is not none else "データ不足" }}{% if health_metrics.fixed_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.fixed_ratio.healthy }}</td><td>{{ health_metrics.fixed_ratio.danger }}</td></tr>
+      <tr><th>指標</th><th>値</th><th>健全ライン</th><th>危険ライン</th><th>判定</th></tr>
+      <tr><td>自己資本比率</td><td>{{ "%.1f"|format(health_metrics.equity_ratio.value) if health_metrics.equity_ratio.value is not none else "―" }}%</td><td>{{ health_metrics.equity_ratio.healthy }}</td><td>{{ health_metrics.equity_ratio.danger }}</td><td>{{ "OK" if health_metrics.equity_ratio.ok else ("NG" if health_metrics.equity_ratio.ok is not none else "―") }}</td></tr>
+      <tr><td>負債比率</td><td>{{ "%.1f"|format(health_metrics.debt_ratio.value) if health_metrics.debt_ratio.value is not none else "データ不足" }}{% if health_metrics.debt_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.debt_ratio.healthy }}</td><td>{{ health_metrics.debt_ratio.danger }}</td><td>{{ "OK" if health_metrics.debt_ratio.ok else ("NG" if health_metrics.debt_ratio.ok is not none else "―") }}</td></tr>
+      <tr><td>流動比率</td><td>{{ "%.1f"|format(health_metrics.current_ratio.value) if health_metrics.current_ratio.value is not none else "データ不足" }}{% if health_metrics.current_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.current_ratio.healthy }}</td><td>{{ health_metrics.current_ratio.danger }}</td><td>{{ "OK" if health_metrics.current_ratio.ok else ("NG" if health_metrics.current_ratio.ok is not none else "―") }}</td></tr>
+      <tr><td>当座比率</td><td>{{ "%.1f"|format(health_metrics.quick_ratio.value) if health_metrics.quick_ratio.value is not none else "データ不足" }}{% if health_metrics.quick_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.quick_ratio.healthy }}</td><td>―</td><td>{{ "OK" if health_metrics.quick_ratio.ok else ("NG" if health_metrics.quick_ratio.ok is not none else "―") }}</td></tr>
+      <tr><td>固定比率</td><td>{{ "%.1f"|format(health_metrics.fixed_ratio.value) if health_metrics.fixed_ratio.value is not none else "データ不足" }}{% if health_metrics.fixed_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.fixed_ratio.healthy }}</td><td>{{ health_metrics.fixed_ratio.danger }}</td><td>{{ "OK" if health_metrics.fixed_ratio.ok else ("NG" if health_metrics.fixed_ratio.ok is not none else "―") }}</td></tr>
     </table>
 
     <h3>② 収益性</h3>
     <table>
-      <tr><th>指標</th><th>値</th><th>目安</th></tr>
-      <tr><td>売上総利益率</td><td>{{ "%.1f"|format(profitability_metrics.gross_margin.value) if profitability_metrics.gross_margin.value is not none else "データ不足" }}{% if profitability_metrics.gross_margin.value is not none %}%{% endif %}</td><td>{{ profitability_metrics.gross_margin.good }}</td></tr>
-      <tr><td>営業利益率</td><td>{{ "%.1f"|format(profitability_metrics.operating_margin.value) if profitability_metrics.operating_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.operating_margin.good }}</td></tr>
-      <tr><td>経常利益率</td><td>{{ "%.1f"|format(profitability_metrics.ordinary_margin.value) if profitability_metrics.ordinary_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.ordinary_margin.good }}</td></tr>
-      <tr><td>純利益率</td><td>{{ "%.1f"|format(profitability_metrics.net_margin.value) if profitability_metrics.net_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.net_margin.good }}</td></tr>
-      <tr><td>ROE</td><td>{{ "%.1f"|format(profitability_metrics.roe.value) if profitability_metrics.roe.value is not none else "―" }}%</td><td>{{ profitability_metrics.roe.good }}</td></tr>
-      <tr><td>ROA</td><td>{{ "%.1f"|format(profitability_metrics.roa.value) if profitability_metrics.roa.value is not none else "―" }}%</td><td>{{ profitability_metrics.roa.good }}</td></tr>
+      <tr><th>指標</th><th>値</th><th>目安</th><th>判定</th></tr>
+      <tr><td>売上総利益率</td><td>{{ "%.1f"|format(profitability_metrics.gross_margin.value) if profitability_metrics.gross_margin.value is not none else "データ不足" }}{% if profitability_metrics.gross_margin.value is not none %}%{% endif %}</td><td>{{ profitability_metrics.gross_margin.good }}</td><td>{{ "OK" if profitability_metrics.gross_margin.ok else ("NG" if profitability_metrics.gross_margin.ok is not none else "―") }}</td></tr>
+      <tr><td>営業利益率</td><td>{{ "%.1f"|format(profitability_metrics.operating_margin.value) if profitability_metrics.operating_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.operating_margin.good }}</td><td>{{ "OK" if profitability_metrics.operating_margin.ok else ("NG" if profitability_metrics.operating_margin.ok is not none else "―") }}</td></tr>
+      <tr><td>経常利益率</td><td>{{ "%.1f"|format(profitability_metrics.ordinary_margin.value) if profitability_metrics.ordinary_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.ordinary_margin.good }}</td><td>―</td></tr>
+      <tr><td>純利益率</td><td>{{ "%.1f"|format(profitability_metrics.net_margin.value) if profitability_metrics.net_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.net_margin.good }}</td><td>{{ "OK" if profitability_metrics.net_margin.ok else ("NG" if profitability_metrics.net_margin.ok is not none else "―") }}</td></tr>
+      <tr><td>ROE</td><td>{{ "%.1f"|format(profitability_metrics.roe.value) if profitability_metrics.roe.value is not none else "―" }}%</td><td>{{ profitability_metrics.roe.good }}</td><td>{{ "OK" if profitability_metrics.roe.ok else ("NG" if profitability_metrics.roe.ok is not none else "―") }}</td></tr>
+      <tr><td>ROA</td><td>{{ "%.1f"|format(profitability_metrics.roa.value) if profitability_metrics.roa.value is not none else "―" }}%</td><td>{{ profitability_metrics.roa.good }}</td><td>{{ "OK" if profitability_metrics.roa.ok else ("NG" if profitability_metrics.roa.ok is not none else "―") }}</td></tr>
+      <tr><td>ROIC</td><td>{{ "%.1f"|format(roic.value) if roic.value is not none else "データ不足" }}{% if roic.value is not none %}%{% endif %}</td><td>{{ profitability_metrics.roic.good }}</td><td>{{ "OK" if profitability_metrics.roic.ok else ("NG" if profitability_metrics.roic.ok is not none else "―") }}</td></tr>
     </table>
+    <p class="note">
+      ROICの実効税率は{% if roic.tax_rate_is_estimated %}法定実効税率の目安({{ "%.0f"|format(roic.tax_rate * 100) }}%)を使用しています(実績値が算出できなかったため)。{% else %}実績値({{ "%.1f"|format(roic.tax_rate * 100) }}%)から算出しています。{% endif %}
+    </p>
+
+    <h3>④ 利益の質(アクルーアル比率・簡易F-Score)</h3>
+    <table>
+      <tr><th>指標</th><th>値</th><th>目安</th></tr>
+      <tr><td>アクルーアル比率</td><td>{{ "%.1f"|format(accrual_ratio.value) if accrual_ratio.value is not none else "データ不足" }}{% if accrual_ratio.value is not none %}%{% endif %}</td><td>{{ accrual_ratio.good }}</td></tr>
+    </table>
+    {% if fscore.score is not none %}
+    <p>簡易F-Score: <strong>{{ fscore.score }} / {{ fscore.max_score }}</strong></p>
+    <table>
+      <tr><th>チェック項目</th><th>判定</th></tr>
+      {% for c in fscore.checks %}
+      <tr>
+        <td>{{ c.label }}</td>
+        <td>{% if c.passed is none %}判定不可{% elif c.passed %}<span class="pill ok">満たす</span>{% else %}<span class="pill" style="background:#fee2e2;color:#991b1b;">満たさない</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="note">簡易F-Scoreの算出には2期分以上の業績データが必要です。</p>
+    {% endif %}
 
     <h3>③ 成長性</h3>
     <table>
-      <tr><th>指標</th><th>値</th><th>目安</th></tr>
-      <tr><td>売上高成長率</td><td>{{ "%.1f"|format(growth_metrics.revenue_growth.value) if growth_metrics.revenue_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.revenue_growth.good }}</td></tr>
-      <tr><td>営業利益成長率</td><td>{{ "%.1f"|format(growth_metrics.operating_income_growth.value) if growth_metrics.operating_income_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.operating_income_growth.good }}</td></tr>
-      <tr><td>純利益成長率</td><td>{{ "%.1f"|format(growth_metrics.net_income_growth.value) if growth_metrics.net_income_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.net_income_growth.good }}</td></tr>
-      <tr><td>総資産回転率</td><td>{{ "%.2f"|format(growth_metrics.asset_turnover.value) if growth_metrics.asset_turnover.value is not none else "―" }}回</td><td>{{ growth_metrics.asset_turnover.good }}</td></tr>
-      <tr><td>売上債権回転率</td><td>{{ "%.2f"|format(growth_metrics.receivables_turnover.value) if growth_metrics.receivables_turnover.value is not none else "データ不足" }}{% if growth_metrics.receivables_turnover.value is not none %}回{% endif %}</td><td>{{ growth_metrics.receivables_turnover.good }}</td></tr>
+      <tr><th>指標</th><th>値</th><th>目安</th><th>判定</th></tr>
+      <tr><td>売上高成長率</td><td>{{ "%.1f"|format(growth_metrics.revenue_growth.value) if growth_metrics.revenue_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.revenue_growth.good }}</td><td>{{ "OK" if growth_metrics.revenue_growth.ok else ("NG" if growth_metrics.revenue_growth.ok is not none else "―") }}</td></tr>
+      <tr><td>営業利益成長率</td><td>{{ "%.1f"|format(growth_metrics.operating_income_growth.value) if growth_metrics.operating_income_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.operating_income_growth.good }}</td><td>{{ "OK" if growth_metrics.operating_income_growth.ok else ("NG" if growth_metrics.operating_income_growth.ok is not none else "―") }}</td></tr>
+      <tr><td>純利益成長率</td><td>{{ "%.1f"|format(growth_metrics.net_income_growth.value) if growth_metrics.net_income_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.net_income_growth.good }}</td><td>{{ "OK" if growth_metrics.net_income_growth.ok else ("NG" if growth_metrics.net_income_growth.ok is not none else "―") }}</td></tr>
+      <tr><td>総資産回転率</td><td>{{ "%.2f"|format(growth_metrics.asset_turnover.value) if growth_metrics.asset_turnover.value is not none else "―" }}回</td><td>{{ growth_metrics.asset_turnover.good }}</td><td>{{ "OK" if growth_metrics.asset_turnover.ok else ("NG" if growth_metrics.asset_turnover.ok is not none else "―") }}</td></tr>
+      <tr><td>売上債権回転率</td><td>{{ "%.2f"|format(growth_metrics.receivables_turnover.value) if growth_metrics.receivables_turnover.value is not none else "データ不足" }}{% if growth_metrics.receivables_turnover.value is not none %}回{% endif %}</td><td>{{ growth_metrics.receivables_turnover.good }}</td><td>―</td></tr>
     </table>
 
     <h3>🚩 危険信号フラグ</h3>
@@ -220,8 +315,31 @@
     </table>
   </section>
 
+  {% if major_shareholders %}
   <section class="card">
-    <h2>6. 企業価値の目安</h2>
+    <h2>8. 株主構成・ガバナンス</h2>
+    <p class="note">出典: EDINET(有価証券報告書「大株主の状況」)。上位10名までを表示しています。</p>
+    <table>
+      <tr><th>株主名</th><th>所有割合</th></tr>
+      {% for s in major_shareholders[:10] %}
+      <tr><td>{{ s.name }}</td><td>{{ "%.2f"|format(s.ratio) }}%</td></tr>
+      {% endfor %}
+    </table>
+    {% if governance.top_shareholder %}
+    <p>
+      筆頭株主: <strong>{{ governance.top_shareholder }}</strong>({{ "%.1f"|format(governance.top_ratio) }}%) ――
+      {{ governance.level }}
+    </p>
+    <p class="note">
+      支配株主の存在自体が悪いわけではありませんが、少数株主(一般投資家)の意見が経営に反映されにくくなる、
+      株式の流動性が低くなる等のリスクがある点は意識しておくとよいでしょう。
+    </p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <h2>9. 企業価値の目安 <span class="unit-note">(単位: 百万円)</span></h2>
     <div class="kpi-grid">
       <div class="kpi">
         <div class="label">清算価値</div>
@@ -256,8 +374,8 @@
       起こります。清算価値は実態より低く算出されている可能性があります。
     </p>
     {% endif %}
-    {% if liquidation.value is not none and company.market_cap is not none %}
-    <p>{% if company.market_cap < liquidation.value %}
+    {% if liquidation.value is not none and market_cap_million is not none %}
+    <p>{% if market_cap_million < liquidation.value %}
       現在の時価総額は清算価値を下回っており、「PBR1倍割れ」的な割安のサインです。
     {% else %}
       現在の時価総額は清算価値を上回っています。
@@ -265,8 +383,38 @@
     {% endif %}
   </section>
 
+  {% if breakeven.available %}
   <section class="card">
-    <h2>7. 投資判断(7項目×5段階評価)</h2>
+    <h2>10. 損益分岐点分析(固定費・変動費の概算) <span class="unit-note">(単位: 百万円)</span></h2>
+    <div class="advice-box">
+      <strong>高低点法による概算:</strong> 売上高が最も多かった{{ breakeven.high_period }}期と、
+      最も少なかった{{ breakeven.low_period }}期の実績から、大まかな固定費・変動費の構造を逆算しています。
+      シクリカルバリュー株では「業績が回復した場合にどれだけ利益が跳ねるか」の目安になりますが、
+      精密な原価計算ではない簡便法である点にご注意ください。
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi"><div class="label">限界利益率(概算)</div><div class="value">{{ "%.1f"|format(breakeven.contribution_margin_ratio) }}%</div></div>
+      <div class="kpi"><div class="label">固定費(概算)</div><div class="value">{{ "{:,.0f}".format(breakeven.fixed_cost) }}</div></div>
+      <div class="kpi"><div class="label">損益分岐点売上高(概算)</div><div class="value">{% if breakeven.breakeven_revenue is not none %}{{ "{:,.0f}".format(breakeven.breakeven_revenue) }}{% else %}算出不可{% endif %}</div></div>
+      <div class="kpi"><div class="label">安全余裕率</div><div class="value">{% if breakeven.safety_margin is not none %}{{ "%.1f"|format(breakeven.safety_margin) }}%{% else %}―{% endif %}</div></div>
+    </div>
+    <p class="note">
+      安全余裕率 = (直近売上高 − 損益分岐点売上高) ÷ 直近売上高。プラスが大きいほど、
+      売上減少に対する耐性があると解釈できます。マイナスの場合、現状の売上水準では
+      概算上「赤字ライン」に近い、または下回っていることを示します。
+    </p>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <h2>11. 投資判断(7項目×5段階評価)</h2>
+    <h3>評価(A〜E)の基準</h3>
+    <div class="grade-def-list">
+      {% for d in grade_definitions %}
+      <div class="grade-def-item"><span class="grade {{ d.grade }}">{{ d.grade }}</span><span>{{ d.desc }}</span></div>
+      {% endfor %}
+    </div>
+    <p class="note">{{ grade_notes }}</p>
     <table>
       <tr><th>項目</th><th>評価</th><th>詳細</th></tr>
       {% for g in grades %}
@@ -337,7 +485,7 @@
   {% endif %}
 
   <section class="card">
-    <h2>8. 総括</h2>
+    <h2>12. 総括</h2>
     <div class="summary-box">{{ summary_text }}</div>
   </section>
 

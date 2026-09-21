@@ -26,6 +26,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import requests
+from bs4 import BeautifulSoup
 
 API_BASE = "https://api.edinet-fsa.go.jp/api/v2"
 CACHE_PATH = Path(__file__).resolve().parent / ".cache" / "edinet_docs.json"
@@ -101,13 +102,8 @@ def find_yuho_document(sec_code4: str, fiscal_year_end: date, api_key: str) -> d
     return None
 
 
-def download_document_facts(doc_id: str, api_key: str) -> dict[str, dict[str, float]] | None:
-    """
-    有価証券報告書のXBRL(ZIP)をダウンロードし、ix:nonFraction要素から
-    タグ名ごとの数値ファクトを抽出する。
-
-    戻り値: {"prefix:TagName": {"contextRef": 値, ...}, ...}
-    """
+def download_document_html(doc_id: str, api_key: str) -> str | None:
+    """有価証券報告書のXBRL(ZIP)をダウンロードし、PublicDoc配下のhtmlを結合して返す。"""
     url = f"{API_BASE}/documents/{doc_id}"
     params = {"type": "1", "Subscription-Key": api_key}
     try:
@@ -125,8 +121,11 @@ def download_document_facts(doc_id: str, api_key: str) -> dict[str, dict[str, fl
                 combined_html.append(zf.read(name).decode("utf-8", errors="ignore"))
             except (KeyError, OSError):
                 continue
-    html = "\n".join(combined_html)
+    return "\n".join(combined_html)
 
+
+def extract_facts_from_html(html: str) -> dict[str, dict[str, float]]:
+    """結合済みhtmlから、ix:nonFraction要素のタグ名ごとの数値ファクトを抽出する。"""
     facts: dict[str, dict[str, float]] = {}
     pattern = re.compile(
         r'<ix:nonFraction\b(?P<attrs>[^>]*)>(?P<value>[^<]*)</ix:nonFraction>', re.IGNORECASE
@@ -150,6 +149,14 @@ def download_document_facts(doc_id: str, api_key: str) -> dict[str, dict[str, fl
         facts.setdefault(f"{prefix}:{tag}", {})[ctx_m.group(1)] = value
 
     return facts
+
+
+def download_document_facts(doc_id: str, api_key: str) -> dict[str, dict[str, float]] | None:
+    """有価証券報告書のXBRLをダウンロードし、数値ファクトを抽出する(従来互換)。"""
+    html = download_document_html(doc_id, api_key)
+    if html is None:
+        return None
+    return extract_facts_from_html(html)
 
 
 def _get_fact(facts: dict, prefix: str, tag: str, context: str = "CurrentYearInstant") -> float | None:
@@ -251,7 +258,151 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
         facts, [("jppfs_cor", "OtherCA"), ("jpigp_cor", "OtherCurrentAssetsCAIFRS")]
     )
 
+    # 以下も損益計算書・キャッシュフロー計算書の期間集計値のため CurrentYearDuration。
+    # ROIC(実効税率の算出)・EV/EBITDA(減価償却費)で使用する。
+    result["depreciation_amortization"] = _first_available(
+        facts,
+        [("jppfs_cor", "DepreciationAndAmortizationOpeCF"), ("jpigp_cor", "DepreciationAndAmortizationOpeCFIFRS")],
+        context="CurrentYearDuration",
+    )
+    result["income_taxes"] = _first_available(
+        facts,
+        [("jppfs_cor", "IncomeTaxes"), ("jpigp_cor", "IncomeTaxExpenseIFRS")],
+        context="CurrentYearDuration",
+    )
+    result["income_before_taxes"] = _first_available(
+        facts,
+        [("jppfs_cor", "IncomeBeforeIncomeTaxes"), ("jpigp_cor", "ProfitLossBeforeTaxIFRS")],
+        context="CurrentYearDuration",
+    )
+
     return result
+
+
+_SUBTOTAL_LABELS = {"計", "合計", "小計", "報告セグメント計"}
+_SEGMENT_HEADING_KEYWORDS = ("報告セグメントごとの売上高", "利益又は損失")
+_SEGMENT_REVENUE_ROW_LABELS = ("外部顧客への売上高", "顧客との契約から生じる収益")
+_SEGMENT_PROFIT_ROW_LABELS = ("セグメント利益又は損失", "セグメント利益", "セグメント損失")
+
+
+def extract_segment_info(html: str) -> list[dict] | None:
+    """
+    有価証券報告書に含まれる「セグメント情報」の注記から、事業セグメント別の
+    売上高・利益を抽出する(たーちゃんの分析で重視される、事業別の業績内訳)。
+
+    セグメント名・表の粒度は会社ごとに大きく異なり汎用的な構造化タグが
+    無いため、決算書の標準的な行ラベル(「外部顧客への売上高」
+    「セグメント利益」等、会計基準上ほぼ共通の表記)を手がかりに、表から
+    直接読み取る。想定した形と異なる場合は None を返し、レポート側では
+    このセクション自体を表示しない(誤った数値を出さないため)。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    heading = soup.find(
+        lambda t: t.name in ("p", "h3", "h4")
+        and all(kw in t.get_text(strip=True) for kw in _SEGMENT_HEADING_KEYWORDS)
+    )
+    if not heading:
+        return None
+    table = heading.find_next("table")
+    if not table:
+        return None
+
+    rows = []
+    for tr in table.find_all("tr"):
+        cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"])]
+        rows.append(cells)
+
+    def find_row(label_candidates: tuple[str, ...]) -> list[str] | None:
+        for row in rows:
+            if row and any(label in row[0] for label in label_candidates):
+                return row
+        return None
+
+    revenue_row = find_row(_SEGMENT_REVENUE_ROW_LABELS)
+    profit_row = find_row(_SEGMENT_PROFIT_ROW_LABELS)
+    if not revenue_row:
+        return None
+
+    revenue_idx = rows.index(revenue_row)
+    segment_names: list[str] | None = None
+    for row in reversed(rows[:revenue_idx]):
+        texts = [c for c in row[1:] if c]
+        if len(texts) >= 1 and all(not re.search(r"[0-9△－]", t) for t in texts):
+            segment_names = texts
+            break
+    if not segment_names:
+        return None
+
+    segment_names = [s for s in segment_names if s not in _SUBTOTAL_LABELS]
+    if not segment_names:
+        return None
+
+    def to_values(row: list[str] | None) -> list[float | None]:
+        if not row:
+            return [None] * len(segment_names)
+        values = []
+        for cell in row[1 : len(segment_names) + 1]:
+            values.append(_to_number(cell))
+        while len(values) < len(segment_names):
+            values.append(None)
+        return values
+
+    revenue_values = to_values(revenue_row)
+    profit_values = to_values(profit_row)
+
+    segments = []
+    for name, revenue, profit in zip(segment_names, revenue_values, profit_values):
+        if revenue is None and profit is None:
+            continue
+        segments.append({"name": name, "revenue": revenue, "profit": profit})
+
+    return segments or None
+
+
+def _to_number(text: str) -> float | None:
+    if text is None:
+        return None
+    text = text.strip().replace(",", "").replace("\xa0", "")
+    if text in ("", "－", "-", "ー"):
+        return None
+    text = text.replace("△", "-")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def extract_major_shareholders(html: str) -> list[dict] | None:
+    """
+    「大株主の状況」の注記から、株主名・所有株式数・所有割合を抽出する。
+    支配株主の集中度(ガバナンスリスク)を確認する材料として使う。
+
+    仕様書で挙げられている「オーナー経営者の議決権が66%超か」等の判定は、
+    このデータの筆頭株主の所有割合をもとに行う(厳密な議決権比率とは
+    異なる場合がある近似値である点に注意)。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    heading = soup.find(
+        lambda t: t.name in ("h3", "h4", "p") and "大株主の状況" in t.get_text(strip=True)
+    )
+    if not heading:
+        return None
+    table = heading.find_next("table")
+    if not table:
+        return None
+
+    shareholders = []
+    for tr in table.find_all("tr"):
+        cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"])]
+        if len(cells) < 4:
+            continue
+        name, _address, _shares, ratio_text = cells[0], cells[1], cells[2], cells[3]
+        ratio = _to_number(ratio_text)
+        if not name or ratio is None or name in ("氏名又は名称", "計"):
+            continue
+        shareholders.append({"name": name, "ratio": ratio})
+
+    return shareholders or None
 
 
 def fetch_balance_sheet_detail_via_edinet(
@@ -266,11 +417,17 @@ def fetch_balance_sheet_detail_via_edinet(
     if not doc:
         return None
 
-    facts = download_document_facts(doc["docID"], api_key)
+    html = download_document_html(doc["docID"], api_key)
+    if not html:
+        return None
+
+    facts = extract_facts_from_html(html)
     if not facts:
         return None
 
     detail = extract_balance_sheet_detail(facts, kabutan_revenue)
     detail["_edinet_doc_id"] = doc["docID"]
     detail["_edinet_submit_date"] = doc["submitDate"]
+    detail["_segments"] = extract_segment_info(html)
+    detail["_major_shareholders"] = extract_major_shareholders(html)
     return detail
