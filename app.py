@@ -9,6 +9,15 @@
 from __future__ import annotations
 
 import streamlit as st
+import streamlit.components.v1 as components
+
+
+def _render_report_html(html_content: str) -> None:
+    """Streamlitのバージョンによって st.iframe が無い場合に対応する。"""
+    if hasattr(st, "iframe"):
+        st.iframe(html_content, height="content")
+    else:
+        components.html(html_content, height=2400, scrolling=True)
 
 from report_app.edinet_config import get_edinet_api_key
 from report_app.report_generator import generate_report
@@ -74,4 +83,4 @@ if generate_clicked and code.strip():
         file_name=report_path.name,
         mime="text/html",
     )
-    st.iframe(html_content, height="content")
+    _render_report_html(html_content)
