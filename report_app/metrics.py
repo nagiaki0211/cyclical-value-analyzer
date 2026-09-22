@@ -147,10 +147,13 @@ def _metric(value: float | None, direction: str, good_th: float, normal_th: floa
 
 # 当座資産に算入する科目(いずれも流動資産に分類されるもののみ)。
 # 棚卸資産・投資有価証券・固定資産は当座資産に含めない。
-QUICK_ASSET_FIELDS = ("cash_and_deposits", "receivables", "securities")
+QUICK_ASSET_FIELDS = (
+    "cash_and_deposits", "receivables", "electronically_recorded_receivables", "securities",
+)
 QUICK_ASSET_LABELS = {
     "cash_and_deposits": "現金及び預金",
-    "receivables": "受取手形・売掛金・電子記録債権",
+    "receivables": "受取手形・売掛金",
+    "electronically_recorded_receivables": "電子記録債権",
     "securities": "有価証券(流動資産計上分)",
 }
 
@@ -169,13 +172,17 @@ def compute_quick_assets(manual: dict) -> dict:
     if cash is None or receivables is None:
         return {"value": None, "components": []}
 
+    electronic = manual.get("electronically_recorded_receivables") or 0.0
     securities = manual.get("securities") or 0.0
     components = [
         {"label": QUICK_ASSET_LABELS["cash_and_deposits"], "value": cash},
         {"label": QUICK_ASSET_LABELS["receivables"], "value": receivables},
-        {"label": QUICK_ASSET_LABELS["securities"], "value": securities},
     ]
-    return {"value": cash + receivables + securities, "components": components}
+    if electronic:
+        components.append({"label": QUICK_ASSET_LABELS["electronically_recorded_receivables"], "value": electronic})
+    if securities:
+        components.append({"label": QUICK_ASSET_LABELS["securities"], "value": securities})
+    return {"value": cash + receivables + electronic + securities, "components": components}
 
 
 def compute_health_metrics(latest: dict, manual: dict) -> dict:

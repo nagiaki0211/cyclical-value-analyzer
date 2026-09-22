@@ -177,6 +177,17 @@ def _sum_available(facts: dict, prefix: str, tags: list[str], context: str = "Cu
     return sum(values) if values else None
 
 
+def _first_available_local_tag(
+    facts: dict, tags: list[str], context: str = "CurrentYearInstant",
+) -> float | None:
+    """企業固有namespaceでも、XBRLのローカルタグ名が一致すれば取得する。"""
+    for tag in tags:
+        for qualified_name, values in facts.items():
+            if qualified_name.rsplit(":", 1)[-1] == tag and values.get(context) is not None:
+                return values[context]
+    return None
+
+
 # フィールド名 -> (会計基準プレフィックス, タグ名) の候補リスト。
 # JGAAP(jppfs_cor)・IFRS(jpigp_cor)の順で試す。
 FIELD_TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
@@ -217,7 +228,11 @@ RECEIVABLES_SINGLE_TAG_CANDIDATES = [
 ]
 RECEIVABLES_JGAAP_SUM_TAGS = [
     "NotesReceivableTrade", "AccountsReceivableTrade",
-    "ElectronicallyRecordedMonetaryClaimsOperating",
+]
+ELECTRONIC_RECEIVABLE_TAGS = [
+    ("jppfs_cor", "ElectronicallyRecordedMonetaryClaimsOperatingCA"),
+    ("jppfs_cor", "ElectronicallyRecordedMonetaryClaimsOperating"),
+    ("jppfs_cor", "ElectronicallyRecordedMonetaryClaims"),
 ]
 
 # 有利子負債の構成科目。「1年内返済予定の長期借入金」「1年内償還予定の社債」は
@@ -273,6 +288,9 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     if receivables is None:
         receivables = _sum_available(facts, "jppfs_cor", RECEIVABLES_JGAAP_SUM_TAGS)
     result["receivables"] = receivables
+    result["electronically_recorded_receivables"] = _first_available(
+        facts, ELECTRONIC_RECEIVABLE_TAGS
+    )
 
     debt = _sum_available(facts, "jpigp_cor", INTEREST_BEARING_DEBT_IFRS_TAGS)
     if debt is not None:
@@ -305,6 +323,19 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     result["depreciation_amortization"] = _first_available(
         facts,
         [("jppfs_cor", "DepreciationAndAmortizationOpeCF"), ("jpigp_cor", "DepreciationAndAmortizationOpeCFIFRS")],
+        context="CurrentYearDuration",
+    )
+    # DCFでは投資CF全体を使わず、設備投資支出だけを控除する。
+    result["capital_expenditure_tangible"] = _first_available(
+        facts,
+        [("jppfs_cor", "PurchaseOfPropertyPlantAndEquipmentInvCF"),
+         ("jpigp_cor", "PurchaseOfPropertyPlantAndEquipmentInvCFIFRS")],
+        context="CurrentYearDuration",
+    )
+    result["capital_expenditure_intangible"] = _first_available(
+        facts,
+        [("jppfs_cor", "PurchaseOfIntangibleAssetsInvCF"),
+         ("jpigp_cor", "PurchaseOfIntangibleAssetsInvCFIFRS")],
         context="CurrentYearDuration",
     )
     result["income_taxes"] = _first_available(
@@ -341,6 +372,10 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     # 特別利益・特別損失(利益の質の判定で、一過性損益を除いた調整後利益に使う)。
     result["extraordinary_income"] = _get_fact(facts, "jppfs_cor", "ExtraordinaryIncome", context="CurrentYearDuration")
     result["extraordinary_loss"] = _get_fact(facts, "jppfs_cor", "ExtraordinaryLoss", context="CurrentYearDuration")
+    result["factory_closure_loss"] = _first_available_local_tag(
+        facts, ["LossOnClosureOfFactoryEL", "LossOnFactoryClosureEL"],
+        context="CurrentYearDuration",
+    )
 
     # 前期の売掛金・棚卸資産(急増チェック用)。貸借対照表項目は Prior1YearInstant。
     prev_receivables = _first_available(facts, RECEIVABLES_SINGLE_TAG_CANDIDATES, context="Prior1YearInstant")
@@ -546,7 +581,7 @@ def extract_major_shareholders(html: str) -> list[dict] | None:
 # 一般的な開示語彙のみを対象とし、銘柄固有の語は含めない。
 RISK_EVENT_KEYWORDS = [
     "撤退", "工場閉鎖", "生産終了", "減損", "評価損", "合弁解消", "解散",
-    "供給停止", "調達先の変更", "訴訟", "増資", "第三者割当", "公募増資",
+    "供給停止", "供給継続が困難", "供給の継続が困難", "供給困難", "調達先の変更", "訴訟", "増資", "第三者割当", "公募増資",
     "業績予想の修正", "配当予想の修正", "特別損失", "事業譲渡", "株式譲渡",
     "営業譲渡", "持分譲渡", "リコール", "行政処分",
 ]
@@ -607,6 +642,21 @@ def extract_risk_events(html: str) -> list[dict] | None:
             )
             if len(events) >= _MAX_RISK_EVENTS:
                 return events
+    # 本文側に金額がなくても、特別損益明細に対応科目がある場合は関連付ける。
+    # 例: 堺工場閉鎖の説明と、明細上の「工場閉鎖損失 504百万円」。
+    full_text = " ".join(soup.get_text(" ", strip=True).split())
+    closure_amount = re.search(
+        r"工場閉鎖損失[^0-9０-９]{0,80}([0-9０-９,，]+)\s*(百万円|億円|千円|円)",
+        full_text,
+    )
+    if closure_amount:
+        amount_text = closure_amount.group(1) + closure_amount.group(2)
+        for event in events:
+            if not event.get("amount_text") and any(
+                keyword in event.get("text", "") for keyword in ("工場閉鎖", "堺工場")
+            ):
+                event["amount_text"] = amount_text
+                event["amount_basis"] = "特別損失明細「工場閉鎖損失」と照合"
     return events or None
 
 

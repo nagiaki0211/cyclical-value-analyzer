@@ -8,7 +8,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from report_app import advanced_metrics, classifier, edinet, grading, metrics, scraper, summary, valuation
+from report_app import advanced_metrics, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation
 from report_app.edinet_config import get_edinet_api_key
 from report_app.manual_input import load_or_create_manual_data
 from report_app.svg_chart import bar_chart_svg
@@ -18,7 +18,7 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
 GLOSSARY = {
     "PER(株価収益率)": "株価が1株当たり利益の何倍かを示す指標。低いほど利益に対して株価が割安とされる。",
-    "PBR(株価純資産倍率)": "株価が1株当たり純資産の何倍かを示す指標。1倍未満は「解散価値より株価が安い」状態とされる。",
+    "PBR(株価純資産倍率)": "株価が1株当たり純資産の何倍かを示す指標。1倍未満は帳簿上の自己資本を下回るが、実際の清算価値を保証するものではない。",
     "ROE(自己資本利益率)": "自己資本(株主のお金)に対してどれだけ利益を生み出したかを示す指標。",
     "ROA(総資産利益率)": "会社の全資産に対してどれだけ利益を生み出したかを示す指標。",
     "自己資本比率": "総資産のうち、返済不要の自己資本が占める割合。高いほど財務が安定しているとされる。",
@@ -44,7 +44,7 @@ GLOSSARY = {
     "PCFR(株価キャッシュフロー倍率)": "時価総額が営業キャッシュフローの何倍かを示す指標。会計上の利益より現金の実態に近い割安度を見られる。",
     "EV/EBITDA": "企業価値(EV = 時価総額+有利子負債-現金)が、金利・税金・減価償却前利益(EBITDA)の何倍かを示す指標。減価償却が大きい設備投資型企業の割安度比較に向く。",
     "アクルーアル比率": "純利益と営業キャッシュフローのズレを総資産で割った指標。値が大きいほど、利益が現金を伴っていない(利益の「質」が低い)可能性がある。",
-    "簡易F-Score": "ROAの改善・営業CFの黒字・利益率の改善の3点で、業績改善の継続性を簡易的に採点する仕組み(本来のPiotroski F-Scoreの簡易版)。",
+    "独自簡易スコア": "収益性・営業CF・利益率・運転資本など最大9項目を独自に採点する参考指標。正式なPiotroski F-Scoreとは異なる。",
     "損益分岐点(高低点法)": "売上高が最大の期と最小の期の実績から、固定費・変動費の大まかな内訳を逆算する簡便な手法。シクリカル株の業績回復時の利益インパクトの目安に使う。",
     "限界利益率": "売上高が1増えたときに、どれだけ利益(限界利益)が増えるかの割合。高いほど、売上増加が利益に直結しやすい(逆に減収時の利益悪化も大きい)。",
 }
@@ -178,11 +178,14 @@ def _build_price_basis(company_data, merged: dict, latest_period: str | None) ->
 
     pbr_label = "PBR(基準確認不能)"
     pbr_basis = "使用BPSを特定できませんでした"
-    if company_data.price and bps and company_data.pbr:
-        implied = company_data.price / bps
-        if abs(implied - company_data.pbr) / company_data.pbr <= 0.10:
-            pbr_label = "実績PBR"
-            pbr_basis = f"実績BPS {bps:.2f}円({latest_period}期)／株価 {company_data.price:.0f}円"
+    pbr_value = None
+    if company_data.price is not None and bps not in (None, 0):
+        pbr_value = company_data.price / bps
+        pbr_label = "実績PBR"
+        pbr_basis = (
+            f"株価 {company_data.price:.0f}円 ÷ 実績BPS {bps:.2f}円"
+            f"({latest_period}期) = {pbr_value:.2f}倍"
+        )
 
     return {
         "per_label": per_label,
@@ -193,6 +196,7 @@ def _build_price_basis(company_data, merged: dict, latest_period: str | None) ->
         "pbr_basis": pbr_basis,
         "bps": bps,
         "bps_period": latest_period,
+        "pbr_value": pbr_value,
         "price_as_of": "株探の個別銘柄ページ取得時点の株価",
     }
 
@@ -242,6 +246,19 @@ def _build_data_sources(code: str, company_data, latest_period: str | None, manu
                 "retrieved_at": retrieved_at,
             }
         )
+    ir_status = manual.get("_ir_status")
+    if ir_status and ir_status.get("confirmed"):
+        sources.append({
+            "items": "最新の適時開示・定性リスク",
+            "source_name": "企業公式IR",
+            "source_url": ir_status.get("source_url"),
+            "document_date": ir_status.get("latest_date"),
+            "fiscal_period": "最新開示",
+            "actual_or_forecast": "開示資料",
+            "consolidated": "資料記載に従う",
+            "unit": "資料記載に従う",
+            "retrieved_at": ir_status.get("retrieved_at"),
+        })
     return sources
 
 
@@ -275,6 +292,25 @@ def _build_section_numbers(flags: dict) -> dict:
     return numbers
 
 
+def _check_source_dates(sources: list[dict], report_date: datetime.date) -> list[str]:
+    """書類日がレポート生成日より未来になっていないか検証する。"""
+    warnings = []
+    for source in sources:
+        value = source.get("document_date")
+        if not value:
+            continue
+        try:
+            document_date = datetime.date.fromisoformat(value)
+        except (TypeError, ValueError):
+            warnings.append(f"出典日を解釈できません: {source.get('source_name')} / {value}")
+            continue
+        if document_date > report_date:
+            warnings.append(
+                f"出典日がレポート生成日より未来です: {source.get('source_name')} / {value}"
+            )
+    return warnings
+
+
 def generate_report(code: str) -> Path:
     company_data = scraper.fetch_company_data(code)
     manual = load_or_create_manual_data(code)
@@ -284,6 +320,10 @@ def generate_report(code: str) -> Path:
     latest = merged.get(latest_period, {}) if latest_period else {}
 
     manual = _enrich_manual_data_with_edinet(code, manual, latest_period, latest)
+    if manual.get("equity_market_value") is None and company_data.market_cap is not None:
+        manual["equity_market_value"] = company_data.market_cap / 1e6
+    ir_status = ir_disclosures.fetch_latest_ir_disclosures(code, manual.get("official_ir_url"))
+    manual["_ir_status"] = ir_status
 
     health_metrics = metrics.compute_health_metrics(latest, manual)
     profitability_metrics = metrics.compute_profitability_metrics(latest, manual)
@@ -308,22 +348,24 @@ def generate_report(code: str) -> Path:
     # 取得される)もここで百万円単位に揃える。単位を揃えないまま比較すると、
     # 常に「時価総額の方が大きい」ように見えてしまう(実際に発生していた不具合)。
     market_cap_million = company_data.market_cap / 1e6 if company_data.market_cap else None
-    asset_type = classifier.classify_asset_value(company_data.pbr, latest.get("equity_ratio"))
+    price_basis = _build_price_basis(company_data, merged, latest_period)
+    effective_pbr = price_basis.get("pbr_value")
+    asset_type = classifier.classify_asset_value(effective_pbr, latest.get("equity_ratio"))
     profit_type = classifier.classify_profit_value(
         {
             "operating_margin": profitability_metrics["operating_margin"]["value"],
             "per": company_data.per,
-            "pbr": company_data.pbr,
+            "pbr": effective_pbr,
             "roa": profitability_metrics["roa"]["value"],
             "market_cap_oku": market_cap_oku,
         }
     )
-    cyclical_type = classifier.classify_cyclical_value(company_data.sector, merged, company_data.pbr)
+    cyclical_type = classifier.classify_cyclical_value(company_data.sector, merged, effective_pbr)
 
     ordered_periods = metrics.ordered_actual_periods(merged)
     free_cash_flow = dcf.get("base_fcf")
     grades, a_grade_items = grading.compile_grades(
-        pbr=company_data.pbr,
+        pbr=effective_pbr,
         per=company_data.per,
         market_cap=market_cap_million,
         liquidation_value=liquidation["value"],
@@ -338,16 +380,6 @@ def generate_report(code: str) -> Path:
         ordered_periods=ordered_periods,
         dividend_yield=company_data.dividend_yield,
         free_cash_flow=free_cash_flow,
-    )
-
-    summary_text = summary.build_summary(
-        company_name=company_data.name or code,
-        asset_type=asset_type,
-        profit_type=profit_type,
-        cyclical_type=cyclical_type,
-        grades=grades,
-        a_grade_items=a_grade_items,
-        danger_flags=danger_flags,
     )
 
     quarterly_analysis = metrics.compute_quarterly_analysis(company_data.quarterly_performance)
@@ -388,20 +420,37 @@ def generate_report(code: str) -> Path:
     )
     breakeven = advanced_metrics.compute_breakeven_analysis(company_data.annual_performance)
     governance = advanced_metrics.compute_governance_check(major_shareholders)
-    risk_events = manual.get("_risk_events")
+    risk_events = list(manual.get("_risk_events") or [])
+    if manual.get("factory_closure_loss") is not None:
+        for event in risk_events:
+            if any(k in event.get("text", "") for k in ("工場閉鎖", "堺工場", "同工場を閉鎖")) and not event.get("amount_text"):
+                event["amount_text"] = f"{manual['factory_closure_loss']:,.0f}百万円"
+                event["amount_basis"] = "特別損失明細「工場閉鎖損失」と照合"
+    risk_events.extend(ir_status.get("risk_events") or [])
     cycle_signals = classifier.build_cycle_signals(
         merged, quarterly_analysis, company_data.annual_performance
     )
     cycle_summary = classifier.summarize_cycle_signals(cycle_signals)
-    price_basis = _build_price_basis(company_data, merged, latest_period)
+    cyclical_type["phase"] = cycle_summary["label"]
+    cyclical_type["detail"] = cycle_summary["detail"]
+    summary_text = summary.build_summary(
+        company_name=company_data.name or code,
+        asset_type=asset_type,
+        profit_type=profit_type,
+        cyclical_type=cyclical_type,
+        grades=grades,
+        a_grade_items=a_grade_items,
+        danger_flags=danger_flags,
+    )
     data_sources = _build_data_sources(code, company_data, latest_period, manual)
     consistency_warnings = metrics.check_ratio_consistency(health_metrics)
+    consistency_warnings.extend(_check_source_dates(data_sources, datetime.date.today()))
     section_numbers = _build_section_numbers(
         {
             "quarterly": bool(quarterly_analysis),
             "segments": bool(segments),
             "shareholders": bool(major_shareholders),
-            "risk_events": bool(risk_events),
+            "risk_events": True,
             "breakeven": bool(breakeven.get("available")),
         }
     )
@@ -467,6 +516,7 @@ def generate_report(code: str) -> Path:
         fscore=fscore,
         breakeven=breakeven,
         risk_events=risk_events,
+        ir_status=ir_status,
         cycle_signals=cycle_signals,
         cycle_summary=cycle_summary,
         price_basis=price_basis,

@@ -28,7 +28,8 @@ TEMPLATE = {
     "cash_and_deposits": None,
     "securities": None,  # 有価証券(流動資産計上分のみ。投資有価証券は含めない)
     "investment_securities_noncurrent": None,  # 投資有価証券(固定資産。修正ネットキャッシュ用)
-    "receivables": None,
+    "receivables": None,  # 受取手形・売掛金(電子記録債権を除く)
+    "electronically_recorded_receivables": None,
     "inventory": None,
     "other_current_assets": None,
     "current_assets": None,
@@ -44,13 +45,20 @@ TEMPLATE = {
     # 損益計算書の補完項目
     "gross_profit": None,
     "depreciation_amortization": None,  # 減価償却費(EV/EBITDA計算用)
+    "capital_expenditure_tangible": None,  # 有形固定資産取得支出(正の金額)
+    "capital_expenditure_intangible": None,  # 無形固定資産取得支出(正の金額)
+    "increase_in_working_capital": None,  # 運転資本増加額(増加は正、減少は負)
     "income_taxes": None,  # 法人税等(ROIC用の実効税率算出に使用)
     "income_before_taxes": None,  # 税引前当期純利益(同上)
     "income_taxes_prev_year": None,  # 前期の法人税等(正常化実効税率の算出に使用)
     "income_before_taxes_prev_year": None,  # 前期の税引前当期純利益(同上)
     "extraordinary_income": None,  # 特別利益(調整後利益の算出に使用)
     "extraordinary_loss": None,  # 特別損失(同上)
+    "factory_closure_loss": None,  # 工場閉鎖損失(特別損失明細との照合用)
     "effective_tax_rate": None,  # ROIC用の実効税率を明示指定する場合(例: 0.3062)
+    "cost_of_equity": None,  # WACC用の株主資本コスト(例: 0.08)
+    "pre_tax_cost_of_debt": None,  # WACC用の税引前負債コスト
+    "equity_market_value": None,  # WACC構成比用の株主資本時価(百万円)
     # 株式数・株主還元(1株あたりDCF価値、株主重視姿勢の判定に使用)
     "shares_issued": None,  # 発行済株式数(株)
     "treasury_shares": None,  # 自己株式数(株)
@@ -62,6 +70,7 @@ TEMPLATE = {
     # 定性情報(項目6: 株主重視姿勢)
     "business_history": None,  # 沿革
     "shareholder_return_notes": None,  # 自社株買い実績等
+    "official_ir_url": None,  # 企業公式IRニュース一覧URL
 }
 
 

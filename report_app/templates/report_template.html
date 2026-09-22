@@ -112,7 +112,7 @@
       <div class="kpi"><div class="label">株価</div><div class="value">{{ "%.1f"|format(company.price) if company.price is not none else "―" }} 円</div></div>
       <div class="kpi"><div class="label">時価総額</div><div class="value">{{ "%.0f"|format(market_cap_oku) if market_cap_oku is not none else "―" }} 億円</div></div>
       <div class="kpi"><div class="label">{{ price_basis.per_label }}</div><div class="value">{{ company.per if company.per is not none else "―" }} 倍</div></div>
-      <div class="kpi"><div class="label">{{ price_basis.pbr_label }}</div><div class="value">{{ company.pbr if company.pbr is not none else "―" }} 倍</div></div>
+      <div class="kpi"><div class="label">{{ price_basis.pbr_label }}</div><div class="value">{{ "%.2f"|format(price_basis.pbr_value) if price_basis.pbr_value is not none else "―" }} 倍</div></div>
       <div class="kpi"><div class="label">配当利回り</div><div class="value">{{ company.dividend_yield if company.dividend_yield is not none else "―" }} %</div></div>
       <div class="kpi"><div class="label">PSR</div><div class="value">{{ "%.2f"|format(valuation_ratios.psr) if valuation_ratios.psr is not none else "―" }} 倍</div></div>
       <div class="kpi"><div class="label">PCFR</div><div class="value">{{ "%.2f"|format(valuation_ratios.pcfr) if valuation_ratios.pcfr is not none else "―" }} 倍</div></div>
@@ -372,7 +372,7 @@
     <p class="note" style="color:var(--warn);">⚠ {{ roic.tax_rate_warning }}</p>
     {% endif %}
 
-    <h3>④ 利益の質(アクルーアル比率・簡易F-Score)</h3>
+    <h3>③ 利益の質(アクルーアル比率・独自簡易スコア)</h3>
     <table>
       <tr><th>指標</th><th>値</th><th>目安</th></tr>
       <tr><td>アクルーアル比率</td><td>{{ "%.1f"|format(accrual_ratio.value) if accrual_ratio.value is not none else "データ不足" }}{% if accrual_ratio.value is not none %}%{% endif %}</td><td>{{ accrual_ratio.good }}</td></tr>
@@ -398,7 +398,7 @@
     {% endif %}
 
     {% if fscore.score is not none %}
-    <p>簡易F-Score(参考値): <strong>{{ fscore.score }} / {{ fscore.max_score }}</strong></p>
+    <p>独自簡易スコア(参考値): <strong>{{ fscore.score }} / {{ fscore.max_score }}</strong></p>
     <table>
       <tr><th>チェック項目</th><th>判定</th></tr>
       {% for c in fscore.checks %}
@@ -415,10 +415,10 @@
     <p class="note" style="color:var(--warn);">⚠ {{ w }}</p>
     {% endfor %}
     {% else %}
-    <p class="note">簡易F-Scoreの算出には2期分以上の業績データが必要です。</p>
+    <p class="note">独自簡易スコアの算出には2期分以上の業績データが必要です。</p>
     {% endif %}
 
-    <h3>③ 成長性</h3>
+    <h3>④ 成長性</h3>
     <table>
       <tr><th>指標</th><th>値</th><th>目安</th><th>判定</th></tr>
       <tr><td>売上高成長率</td><td>{{ pct(growth_metrics.revenue_growth.value) }}</td><td>{{ growth_metrics.revenue_growth.good }}</td><td>{{ level_cell(growth_metrics.revenue_growth) }}</td></tr>
@@ -467,25 +467,32 @@
   </section>
   {% endif %}
 
-  {% if risk_events %}
+  {% if risk_events or ir_status %}
   <section class="card">
     <h2>{{ sec.risk_events }}. 定性リスク・重要イベント</h2>
     <p class="note">
-      出典: EDINET(有価証券報告書の「事業等のリスク」「対処すべき課題」「後発事象」等)。
-      開示されている文をそのまま引用しています。金額が本文に明記されていない項目は
-      推測せず「金額未確定(会社精査中の可能性)」と表示します。
+      出典: EDINETおよび企業公式IR。損益計算書・CF計算書・注記・特別損益明細と照合し、
+      対応金額を確認できなかった項目のみ「金額未確定」と表示します。
       網羅性を保証するものではないため、重要な判断の前には原文をご確認ください。
     </p>
+    {% if ir_status.confirmed %}
+    <p class="note" style="color:var(--good);">最新IR確認日: <strong>{{ ir_status.latest_date }}</strong>
+      (取得日時: {{ ir_status.retrieved_at }})</p>
+    {% else %}
+    <p class="note" style="color:var(--bad);">⚠ 最新IR・TDnet未確認</p>
+    {% endif %}
+    {% if risk_events %}
     <table>
       <tr><th>検出キーワード</th><th>開示内容(原文)</th><th>金額</th></tr>
       {% for e in risk_events %}
       <tr>
         <td>{{ e.keywords|join("、") }}<br><span class="note">{{ e.section }}</span></td>
-        <td style="text-align:left;">{{ e.text }}</td>
-        <td>{% if e.amount_text %}{{ e.amount_text }}{% else %}<span class="missing">金額未確定</span>{% endif %}</td>
+        <td style="text-align:left;">{{ e.text }}{% if e.url %}<br><span class="note">{{ e.date }} / {{ e.url }}</span>{% endif %}</td>
+        <td>{% if e.amount_text %}{{ e.amount_text }}{% if e.amount_basis %}<br><span class="note">{{ e.amount_basis }}</span>{% endif %}{% else %}<span class="missing">金額未確定</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </table>
+    {% endif %}
   </section>
   {% endif %}
 
@@ -548,11 +555,35 @@
     <table>
       <tr><th>前提条件</th><th>内容</th></tr>
       <tr><td>基準FCF</td><td>{{ "{:,.0f}".format(dcf.base_fcf) }} 百万円({{ latest_period }}期実績)</td></tr>
-      <tr><td>FCFの定義</td><td>{{ dcf.fcf_definition }}<br>営業CF {{ "{:,.0f}".format(dcf.operating_cf) }} ＋ 投資CF {{ "{:,.0f}".format(dcf.investing_cf) }}</td></tr>
+      <tr><td>FCFの定義</td><td>{{ dcf.fcf_definition }}<br>
+        {% if dcf.fcf_kind == "FCFF" %}
+        NOPAT {{ "{:,.0f}".format(dcf.fcf_components.nopat) }} ＋ 減価償却費 {{ "{:,.0f}".format(dcf.fcf_components.depreciation) }}
+        − 有形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_tangible) }} − 無形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_intangible) }}
+        − 運転資本増加額 {{ "{:,.0f}".format(dcf.fcf_components.increase_in_working_capital) }}
+        {% else %}
+        営業CF {{ "{:,.0f}".format(dcf.fcf_components.operating_cf) }} − 有形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_tangible) }}
+        − 無形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_intangible) }}。<strong>厳密なFCFFではありません。</strong>
+        {% endif %}
+      </td></tr>
       <tr><td>予測年数</td><td>{{ dcf.forecast_years }} 年(6年目以降はターミナルバリューで評価)</td></tr>
       <tr><td>現金(株主価値への加算)</td><td>{{ "{:,.0f}".format(dcf.cash) }} 百万円</td></tr>
       <tr><td>有利子負債(株主価値からの減算)</td><td>{{ "{:,.0f}".format(dcf.debt) }} 百万円</td></tr>
       <tr><td>発行済株式数(自己株式控除後)</td><td>{% if dcf.shares_outstanding %}{{ "{:,.0f}".format(dcf.shares_outstanding) }} 株{% else %}N/A{% endif %}</td></tr>
+    </table>
+
+    <h3>WACCの根拠</h3>
+    <p class="note">区分: <strong>{{ dcf.wacc_basis.kind }}</strong>。構成要素が不足する場合、各シナリオのWACCは計算値ではなく仮定です。</p>
+    <table>
+      <tr><th>株主資本コスト</th><th>負債コスト(税引前)</th><th>税率</th><th>株主資本時価</th><th>有利子負債</th><th>株主資本構成比</th><th>有利子負債構成比</th></tr>
+      <tr>
+        <td>{{ "%.2f"|format(dcf.wacc_basis.cost_of_equity * 100) ~ "%" if dcf.wacc_basis.cost_of_equity is not none else "N/A" }}</td>
+        <td>{{ "%.2f"|format(dcf.wacc_basis.pre_tax_cost_of_debt * 100) ~ "%" if dcf.wacc_basis.pre_tax_cost_of_debt is not none else "N/A" }}</td>
+        <td>{{ "%.2f"|format(dcf.wacc_basis.tax_rate * 100) }}%</td>
+        <td>{{ "{:,.0f}".format(dcf.wacc_basis.equity_value) ~ "百万円" if dcf.wacc_basis.equity_value is not none else "N/A" }}</td>
+        <td>{{ "{:,.0f}".format(dcf.wacc_basis.debt_value) ~ "百万円" if dcf.wacc_basis.debt_value is not none else "N/A" }}</td>
+        <td>{{ "%.1f"|format(dcf.wacc_basis.equity_weight * 100) ~ "%" if dcf.wacc_basis.equity_weight is not none else "N/A" }}</td>
+        <td>{{ "%.1f"|format(dcf.wacc_basis.debt_weight * 100) ~ "%" if dcf.wacc_basis.debt_weight is not none else "N/A" }}</td>
+      </tr>
     </table>
 
     <table>
@@ -804,9 +835,8 @@
     </table>
     <p class="note">
       通期実績だけでなく、直近四半期・TTM・会社予想も併せて確認しています。
-      判定材料が食い違う場合は単一のラベルに集約せず、「回復初期」「転換点の可能性」
-      「判定保留」として、持続性が未確認であることを明示します。
-      (参考)通期実績のみによる従来判定: {{ cyclical_type.phase }}{% if cyclical_type.detail %}({{ cyclical_type.detail }}){% endif %}。
+      判定材料が食い違う場合は「回復初期」「転換点の可能性」「判定保留」として、
+      持続性が未確認であることを明示します。詳細欄と総括は同じ総合判定を参照しています。
     </p>
     {% endif %}
   </section>
@@ -816,8 +846,8 @@
     <h2>{{ sec.sources }}. 出典・データ系統</h2>
     <p class="note">
       各数値の取得元と対象期間です。実績と会社予想、連結と単体、通期と四半期を
-      混在させていないことを確認できます。なお本アプリは企業公式IR・TDnetの
-      直接取得には対応しておらず、EDINET(金融庁)と株探(二次情報)を使用しています。
+      混在させていないことを確認できます。EDINETに加えて企業公式IRの最新開示を確認し、
+      取得できない場合は警告を表示します。
     </p>
     <table>
       <tr><th>対象データ</th><th>出典</th><th>対象期間</th><th>実績/予想</th><th>連結/単体</th><th>単位</th><th>取得日時</th></tr>

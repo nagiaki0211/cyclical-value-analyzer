@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from report_app import advanced_metrics, classifier, edinet, grading, metrics, valuation
-from report_app.report_generator import _build_section_numbers
+from report_app import advanced_metrics, classifier, edinet, grading, ir_disclosures, metrics, summary, valuation
+from report_app.report_generator import _build_price_basis, _build_section_numbers, _check_source_dates
 from report_app.scraper import _parse_market_cap
 
 
@@ -26,6 +28,7 @@ def sample_manual(**overrides) -> dict:
         "securities": None,               # 流動資産の有価証券は無し
         "investment_securities_noncurrent": 10503.0,
         "receivables": 7453.0,
+        "electronically_recorded_receivables": 1164.0,
         "receivables_prev_year": 7570.0,
         "inventory": 5596.0,
         "inventory_prev_year": 5448.0,
@@ -41,6 +44,9 @@ def sample_manual(**overrides) -> dict:
         "goodwill": 0.0,
         "interest_bearing_debt": 7269.0,
         "depreciation_amortization": 755.0,
+        "capital_expenditure_tangible": 322.0,
+        "capital_expenditure_intangible": 85.0,
+        "increase_in_working_capital": None,
         "income_taxes": 32.0,
         "income_before_taxes": 679.0,
         "income_taxes_prev_year": 155.0,
@@ -103,7 +109,15 @@ class TestQuickRatio(unittest.TestCase):
     def test_quick_assets_exclude_noncurrent_securities(self):
         """投資有価証券(固定資産)が当座資産に混入しないこと。"""
         quick = metrics.compute_quick_assets(sample_manual())
-        self.assertAlmostEqual(quick["value"], 5685.0 + 7453.0)
+        self.assertAlmostEqual(quick["value"], 5685.0 + 7453.0 + 1164.0)
+
+    def test_4406_quick_ratio_includes_electronic_receivables(self):
+        health = metrics.compute_health_metrics(sample_latest(), sample_manual())
+        self.assertAlmostEqual(health["quick_ratio"]["value"], 139.0, places=1)
+        self.assertAlmostEqual(
+            sum(c["value"] for c in health["quick_ratio"]["components"]),
+            5685.0 + 7453.0 + 1164.0,
+        )
 
     def test_consistency_check_detects_inverted_ratios(self):
         """定義上ありえない大小関係を検知して警告を出すこと。"""
@@ -137,13 +151,36 @@ class TestDcf(unittest.TestCase):
         self.assertIsNone(result.get("equity_value"))
         self.assertIn("永久成長率", result["error"])
 
-    def test_fcf_sign_convention(self):
-        """FCF = 営業CF + 投資CF(投資CFは符号付き)。減算すると符号が反転する。"""
-        self.assertAlmostEqual(self.dcf["base_fcf"], 1643.0 + 501.0)
-        negative_investing = valuation.compute_dcf(
-            sample_latest(investing_cf=-600.0), sample_manual(), None
+    def test_simple_fcf_excludes_all_investing_cashflow(self):
+        """投資有価証券売却収入等を含む投資CF全体を継続FCFに使わない。"""
+        self.assertAlmostEqual(self.dcf["base_fcf"], 1643.0 - 322.0 - 85.0)
+        large_sale_proceeds = valuation.compute_dcf(
+            sample_latest(investing_cf=9999.0), sample_manual(), None
         )
-        self.assertAlmostEqual(negative_investing["base_fcf"], 1643.0 - 600.0)
+        self.assertAlmostEqual(large_sale_proceeds["base_fcf"], 1236.0)
+        self.assertEqual(large_sale_proceeds["fcf_kind"], "簡易FCF")
+        self.assertTrue(any("厳密なFCFFではありません" in w for w in large_sale_proceeds["warnings"]))
+
+    def test_strict_fcff_formula(self):
+        manual = sample_manual(increase_in_working_capital=100.0, effective_tax_rate=0.30)
+        result = valuation.compute_dcf(sample_latest(), manual, None)
+        expected = 576.0 * (1 - 0.30) + 755.0 - 322.0 - 85.0 - 100.0
+        self.assertAlmostEqual(result["base_fcf"], expected)
+        self.assertTrue(result["is_strict_fcff"])
+
+    def test_wacc_is_labelled_scenario_assumption_when_inputs_missing(self):
+        self.assertEqual(self.dcf["wacc_basis"]["kind"], "シナリオ仮定")
+
+    def test_wacc_components_are_reproducible(self):
+        manual = sample_manual(
+            cost_of_equity=0.08, pre_tax_cost_of_debt=0.02,
+            equity_market_value=8690.0, effective_tax_rate=0.30,
+        )
+        result = valuation.compute_dcf(sample_latest(), manual, None)
+        basis = result["wacc_basis"]
+        expected = basis["equity_weight"] * 0.08 + basis["debt_weight"] * 0.02 * 0.70
+        self.assertEqual(basis["kind"], "計算値")
+        self.assertAlmostEqual(basis["value"], expected)
 
     def test_terminal_value_is_discounted(self):
         for scenario in self.dcf["scenarios"]:
@@ -249,8 +286,24 @@ class TestPerPbrDefinition(unittest.TestCase):
         self.assertAlmostEqual(price / forecast_eps, reported_per, delta=reported_per * 0.05)
 
     def test_pbr_matches_price_divided_by_bps(self):
-        price, bps, reported_pbr = 233.0, 529.55, 0.42
-        self.assertAlmostEqual(price / bps, reported_pbr, delta=reported_pbr * 0.10)
+        price, bps = 233.0, 529.55
+        self.assertEqual(round(price / bps, 2), 0.44)
+
+    def test_displayed_pbr_uses_same_price_and_bps(self):
+        company = SimpleNamespace(
+            price=233.0, pbr=0.42, per=None, annual_performance=[]
+        )
+        basis = _build_price_basis(company, {"2026.03": {"bps": 529.55}}, "2026.03")
+        self.assertEqual(round(basis["pbr_value"], 2), 0.44)
+        self.assertIn("2026.03", basis["pbr_basis"])
+
+    def test_q1_bps_can_support_042_when_period_is_explicit(self):
+        company = SimpleNamespace(
+            price=233.0, pbr=0.42, per=None, annual_performance=[]
+        )
+        basis = _build_price_basis(company, {"2027.03 Q1": {"bps": 555.87}}, "2027.03 Q1")
+        self.assertEqual(round(basis["pbr_value"], 2), 0.42)
+        self.assertIn("2027.03 Q1", basis["pbr_basis"])
 
 
 class TestQuarterlyAnalysis(unittest.TestCase):
@@ -538,6 +591,46 @@ class TestInterestBearingDebtTags(unittest.TestCase):
     def test_noncurrent_investment_securities_has_its_own_field(self):
         tags = [tag for _, tag in edinet.FIELD_TAG_CANDIDATES["investment_securities_noncurrent"]]
         self.assertIn("InvestmentSecurities", tags)
+
+    def test_company_specific_factory_closure_loss_tag_is_resolved(self):
+        facts = {
+            "company-specific:LossOnFactoryClosureEL": {"CurrentYearDuration": 504.0}
+        }
+        detail = edinet.extract_balance_sheet_detail(facts, None)
+        self.assertEqual(detail["factory_closure_loss"], 504.0)
+
+
+class TestDisclosureAndCycleConsistency(unittest.TestCase):
+    def test_ir_index_excludes_future_sources_and_reports_latest_date(self):
+        html = """
+        <ul>
+          <li>2026-08-07 <a href="/latest.pdf">天然高級アルコール事業からの撤退</a></li>
+          <li>2026-10-01 <a href="/future.pdf">将来の開示</a></li>
+        </ul>
+        """
+        rows = ir_disclosures.parse_ir_index(
+            html, "https://example.com/ir", date(2026, 9, 22)
+        )
+        self.assertEqual([r["date"] for r in rows], ["2026-08-07"])
+        self.assertEqual(rows[0]["url"], "https://example.com/latest.pdf")
+
+    def test_report_source_date_cannot_be_in_the_future(self):
+        sources = [{"source_name": "テスト開示", "document_date": "2026-09-23"}]
+        self.assertTrue(_check_source_dates(sources, date(2026, 9, 22)))
+        self.assertEqual(_check_source_dates(sources, date(2026, 9, 23)), [])
+
+    def test_detail_and_summary_use_same_cycle_judgment(self):
+        judgment = {"label": "①回復初期の可能性", "detail": "直近は改善"}
+        cyclical = {
+            "matched": True, "phase": judgment["label"], "detail": judgment["detail"]
+        }
+        text = summary.build_summary(
+            company_name="テスト社", asset_type={"matched": False},
+            profit_type={"matched": False}, cyclical_type=cyclical,
+            grades=[], a_grade_items=[], danger_flags=[],
+        )
+        self.assertIn(judgment["label"], text)
+        self.assertNotIn("③後退期", text)
 
 
 if __name__ == "__main__":

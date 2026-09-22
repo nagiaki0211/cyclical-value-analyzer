@@ -119,7 +119,8 @@ DCF_SCENARIOS = [
     {"key": "base", "label": "標準", "growth": 0.02, "wacc": 0.08, "terminal_growth": 0.005},
     {"key": "bull", "label": "強気", "growth": 0.05, "wacc": 0.07, "terminal_growth": 0.010},
 ]
-FCF_DEFINITION = "営業キャッシュフロー + 投資キャッシュフロー(投資CFは符号付き。設備投資等の支出はマイナス)"
+FCFF_DEFINITION = "FCFF = NOPAT + 減価償却費 - 設備投資 - 運転資本増加額"
+SIMPLE_FCF_DEFINITION = "簡易FCF = 営業CF - 有形固定資産取得 - 無形固定資産取得"
 
 SENSITIVITY_WACCS = [0.06, 0.07, 0.08, 0.09, 0.10]
 SENSITIVITY_TERMINAL_GROWTHS = [0.000, 0.005, 0.010, 0.015]
@@ -170,6 +171,70 @@ def _run_dcf_scenario(scenario: dict, base_fcf: float, cash: float, debt: float,
     return result
 
 
+def _resolve_wacc(manual: dict, tax_rate: float) -> dict:
+    """WACCの計算根拠を返す。不足時は固定値を計算値と呼ばない。"""
+    equity_cost = manual.get("cost_of_equity")
+    debt_cost = manual.get("pre_tax_cost_of_debt")
+    equity = manual.get("equity_market_value")
+    debt = manual.get("interest_bearing_debt")
+    capital_available = equity is not None and debt is not None and equity + debt > 0
+    equity_weight = equity / (equity + debt) if capital_available else None
+    debt_weight = debt / (equity + debt) if capital_available else None
+    if all(v is not None for v in (equity_cost, debt_cost)) and capital_available:
+        value = equity_weight * equity_cost + debt_weight * debt_cost * (1 - tax_rate)
+        return {
+            "kind": "計算値", "value": value, "cost_of_equity": equity_cost,
+            "pre_tax_cost_of_debt": debt_cost, "tax_rate": tax_rate,
+            "equity_value": equity, "debt_value": debt,
+            "equity_weight": equity_weight, "debt_weight": debt_weight,
+        }
+    return {
+        "kind": "シナリオ仮定", "value": None, "cost_of_equity": equity_cost,
+        "pre_tax_cost_of_debt": debt_cost, "tax_rate": tax_rate,
+        "equity_value": equity, "debt_value": debt,
+        "equity_weight": equity_weight, "debt_weight": debt_weight,
+    }
+
+
+def _resolve_base_fcf(latest: dict, manual: dict, tax_rate: float) -> dict:
+    """厳密なFCFFを優先し、不足時だけ設備投資控除後の簡易FCFを使う。"""
+    operating_income = latest.get("operating_income")
+    depreciation = manual.get("depreciation_amortization")
+    capex_tangible = manual.get("capital_expenditure_tangible")
+    capex_intangible = manual.get("capital_expenditure_intangible")
+    working_capital = manual.get("increase_in_working_capital")
+    operating_cf = latest.get("operating_cf")
+
+    capex_tangible = abs(capex_tangible) if capex_tangible is not None else None
+    capex_intangible = abs(capex_intangible) if capex_intangible is not None else None
+    total_capex = (
+        capex_tangible + capex_intangible
+        if capex_tangible is not None and capex_intangible is not None else None
+    )
+    if all(v is not None for v in (operating_income, depreciation, total_capex, working_capital)):
+        nopat = operating_income * (1 - tax_rate)
+        return {
+            "value": nopat + depreciation - total_capex - working_capital,
+            "kind": "FCFF", "definition": FCFF_DEFINITION, "is_strict_fcff": True,
+            "components": {"nopat": nopat, "depreciation": depreciation,
+                           "capex_tangible": capex_tangible, "capex_intangible": capex_intangible,
+                           "increase_in_working_capital": working_capital, "operating_cf": operating_cf},
+        }
+    if operating_cf is not None and total_capex is not None:
+        return {
+            "value": operating_cf - total_capex,
+            "kind": "簡易FCF", "definition": SIMPLE_FCF_DEFINITION, "is_strict_fcff": False,
+            "components": {"nopat": None, "depreciation": depreciation,
+                           "capex_tangible": capex_tangible, "capex_intangible": capex_intangible,
+                           "increase_in_working_capital": None, "operating_cf": operating_cf},
+        }
+    return {
+        "value": None, "kind": None, "definition": SIMPLE_FCF_DEFINITION,
+        "is_strict_fcff": False, "components": {"operating_cf": operating_cf,
+        "capex_tangible": capex_tangible, "capex_intangible": capex_intangible},
+    }
+
+
 def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = None) -> dict:
     """
     DCF法による株主価値の目安(弱気・標準・強気)。
@@ -182,29 +247,38 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
     持たないため、算出せず警告を返す。
     """
     operating_cf = latest.get("operating_cf")
-    investing_cf = latest.get("investing_cf")
     cash = manual.get("cash_and_deposits")
     debt = manual.get("interest_bearing_debt")
 
+    from report_app.advanced_metrics import resolve_effective_tax_rate
+    tax = resolve_effective_tax_rate(manual)
+    fcf = _resolve_base_fcf(latest, manual, tax["rate"])
+    base_fcf = fcf["value"]
+    wacc = _resolve_wacc(manual, tax["rate"])
     warnings: list[str] = []
-    base_fcf = None
-    if operating_cf is not None and investing_cf is not None:
-        # 投資CFは支出がマイナスで表現されるため「加算」する(減算は符号の二重反転)。
-        base_fcf = operating_cf + investing_cf
+    if not fcf["is_strict_fcff"] and base_fcf is not None:
+        warnings.append("設備投資控除後の簡易FCFであり、厳密なFCFFではありません")
+    if wacc["kind"] == "シナリオ仮定":
+        warnings.append("WACC構成要素が不足しているため、割引率は計算値ではなくシナリオ仮定です")
 
-    missing = [
-        label
-        for label, value in (
-            ("営業CF", operating_cf), ("投資CF", investing_cf),
-            ("現金及び預金", cash), ("有利子負債", debt),
+    missing = []
+    if base_fcf is None:
+        missing.extend(
+            label for label, value in (
+                ("営業CF", operating_cf),
+                ("有形固定資産取得", fcf["components"].get("capex_tangible")),
+                ("無形固定資産取得", fcf["components"].get("capex_intangible")),
+            ) if value is None
         )
-        if value is None
-    ]
+    missing.extend(label for label, value in (
+        ("現金及び預金", cash), ("有利子負債", debt),
+    ) if value is None)
     if missing:
         return {
             "available": False,
             "reason": "データ不足のため算出できません(不足項目: " + "、".join(missing) + ")",
-            "base_fcf": base_fcf, "fcf_definition": FCF_DEFINITION,
+            "base_fcf": base_fcf, "fcf_definition": fcf["definition"],
+            "fcf_kind": fcf["kind"], "fcf_components": fcf["components"], "wacc_basis": wacc,
             "scenarios": [], "warnings": warnings,
             "bear_case": None, "bull_case": None,
         }
@@ -213,16 +287,22 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
         return {
             "available": False,
             "reason": "基準フリーキャッシュフローがマイナスのため、DCFによる評価は成立しません",
-            "base_fcf": base_fcf, "fcf_definition": FCF_DEFINITION,
-            "operating_cf": operating_cf, "investing_cf": investing_cf,
+            "base_fcf": base_fcf, "fcf_definition": fcf["definition"],
+            "fcf_kind": fcf["kind"], "fcf_components": fcf["components"], "wacc_basis": wacc,
+            "operating_cf": operating_cf,
             "cash": cash, "debt": debt,
             "scenarios": [], "warnings": ["基準FCFがマイナス(ターミナルバリューも成立しないため全シナリオ算出不可)"],
             "bear_case": None, "bull_case": None,
         }
 
-    scenarios = [
-        _run_dcf_scenario(s, base_fcf, cash, debt, shares_outstanding) for s in DCF_SCENARIOS
-    ]
+    scenario_inputs = []
+    for scenario in DCF_SCENARIOS:
+        item = dict(scenario)
+        if wacc["value"] is not None:
+            item["wacc"] = wacc["value"]
+        item["wacc_kind"] = wacc["kind"]
+        scenario_inputs.append(item)
+    scenarios = [_run_dcf_scenario(s, base_fcf, cash, debt, shares_outstanding) for s in scenario_inputs]
     by_key = {s["key"]: s for s in scenarios}
     values = [s.get("equity_value") for s in scenarios if s.get("equity_value") is not None]
     monotonic_ok = values == sorted(values)
@@ -233,9 +313,12 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
         "available": True,
         "reason": None,
         "base_fcf": base_fcf,
-        "fcf_definition": FCF_DEFINITION,
+        "fcf_definition": fcf["definition"],
+        "fcf_kind": fcf["kind"],
+        "fcf_components": fcf["components"],
+        "is_strict_fcff": fcf["is_strict_fcff"],
+        "wacc_basis": wacc,
         "operating_cf": operating_cf,
-        "investing_cf": investing_cf,
         "forecast_years": DCF_FORECAST_YEARS,
         "cash": cash,
         "debt": debt,

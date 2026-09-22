@@ -5,7 +5,7 @@
 - PSR・PCFR・EV/EBITDA: PERだけでは測れない割安度の補助指標
   (特に赤字企業・減価償却の大きい設備投資型企業で有効)
 - アクルーアル比率: 利益の「質」(現金を伴っているか)のチェック
-- 簡易F-Score: 業績改善の継続性を確認する簡易スコア
+- 独自簡易スコア: 業績改善の継続性を確認する参考指標
 - 固定費・変動費の概算(高低点法): シクリカル株の「回復時の利益インパクト」試算
 
 いずれも、有価証券報告書に詳細な内訳の開示が無い会社でも使えるよう、
@@ -230,7 +230,7 @@ def compute_adjusted_profit(latest: dict, manual: dict, tax_rate: float) -> dict
 def compute_simplified_fscore(merged: dict[str, dict], ordered_periods: list[str],
                                manual: dict | None = None, adjusted: dict | None = None) -> dict:
     """
-    簡易F-Score(参考値)。正式な Piotroski F-Score(9項目)ではない。
+    独自簡易スコア(参考値)。正式な Piotroski F-Score(9項目)ではない。
 
     純利益は特別損益で容易に増減するため、純利益系の指標だけで
     「改善している」と判断しないよう、本業(営業利益・営業CF)と
@@ -297,7 +297,7 @@ def compute_simplified_fscore(merged: dict[str, dict], ordered_periods: list[str
         cumulative_ocf = sum(ocf_values)
 
     warnings = [
-        "この指標は簡易版・参考値であり、正式なPiotroski F-Score(9項目)ではありません。",
+        "これは最大9項目の独自簡易スコアであり、正式なPiotroski F-Scoreではありません。",
     ]
     if adjusted and adjusted.get("is_material"):
         warnings.append(
