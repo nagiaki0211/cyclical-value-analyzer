@@ -7,7 +7,27 @@
   :root {
     --bg: #f6f7fb; --card: #ffffff; --text: #1f2430; --muted: #6b7280;
     --accent: #2563eb; --good: #16a34a; --warn: #d97706; --bad: #dc2626;
-    --border: #e5e7eb;
+    --border: #e5e7eb; --th-bg: #f1f5f9; --h3: #374151;
+    --chart-text: #333333; --chart-axis: #999999;
+    --box-info-bg: #eff6ff; --box-info-border: #bfdbfe;
+    --box-advice-bg: #f0fdf4; --box-advice-border: #bbf7d0;
+    --box-warn-bg: #fffbeb; --box-warn-border: #fde68a; --box-warn-text: #7c5e10;
+    --pill-ok-bg: #dcfce7; --pill-ok-text: #166534;
+    --pill-muted-bg: #f1f5f9; --pill-muted-text: #64748b;
+  }
+  /* ダークモード。SVGグラフの文字色・軸色も変数経由で切り替える。 */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8;
+      --accent: #60a5fa; --good: #4ade80; --warn: #fbbf24; --bad: #f87171;
+      --border: #334155; --th-bg: #273449; --h3: #cbd5e1;
+      --chart-text: #cbd5e1; --chart-axis: #64748b;
+      --box-info-bg: #172554; --box-info-border: #1e40af;
+      --box-advice-bg: #052e16; --box-advice-border: #166534;
+      --box-warn-bg: #292215; --box-warn-border: #78581a; --box-warn-text: #fcd34d;
+      --pill-ok-bg: #14532d; --pill-ok-text: #bbf7d0;
+      --pill-muted-bg: #334155; --pill-muted-text: #cbd5e1;
+    }
   }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
@@ -24,37 +44,37 @@
   section.card { background:var(--card); border:1px solid var(--border); border-radius:12px;
                  padding:20px 22px; margin-bottom:20px; }
   section.card h2 { margin-top:0; font-size:1.2em; border-left:5px solid var(--accent); padding-left:10px; }
-  section.card h3 { font-size:1.02em; color:#374151; margin-top:22px; }
+  section.card h3 { font-size:1.02em; color:var(--h3); margin-top:22px; }
   table { width:100%; border-collapse:collapse; margin:10px 0; font-size:0.92em; }
   th, td { border:1px solid var(--border); padding:7px 10px; text-align:right; }
-  th { background:#f1f5f9; text-align:center; white-space:nowrap; }
+  th { background:var(--th-bg); text-align:center; white-space:nowrap; }
   td:first-child, th:first-child { text-align:left; }
   .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin:12px 0; }
-  .kpi { background:#f8fafc; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .kpi { background:var(--th-bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
   .kpi .label { font-size:0.78em; color:var(--muted); }
   .kpi .value { font-size:1.25em; font-weight:700; }
   .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:0.8em; font-weight:700; }
-  .pill.ok { background:#dcfce7; color:#166534; }
-  .pill.ng { background:#f1f5f9; color:#64748b; }
-  .pill.unknown { background:#f1f5f9; color:#94a3b8; }
-  .flag-row.triggered { background:#fef2f2; color:var(--bad); font-weight:700; }
+  .pill.ok { background:var(--pill-ok-bg); color:var(--pill-ok-text); }
+  .pill.ng { background:var(--pill-muted-bg); color:var(--pill-muted-text); }
+  .pill.unknown { background:var(--pill-muted-bg); color:var(--muted); }
+  .flag-row.triggered { background:rgba(220,38,38,0.08); color:var(--bad); font-weight:700; }
   .flag-row.unknown td { color:var(--muted); }
   .grade { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px;
            border-radius:50%; font-weight:800; color:#fff; }
   .grade.A { background:#16a34a; } .grade.B { background:#65a30d; } .grade.C { background:#d97706; }
   .grade.D { background:#ea580c; } .grade.E { background:#dc2626; } .grade.none { background:#94a3b8; }
   .note { color:var(--muted); font-size:0.85em; }
-  .summary-box { background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; padding:16px 18px; }
+  .summary-box { background:var(--box-info-bg); border:1px solid var(--box-info-border); border-radius:10px; padding:16px 18px; }
   .type-section { border-left:4px solid var(--accent); padding-left:16px; margin:14px 0; }
-  .disclaimer { background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:16px 18px;
-                font-size:0.9em; color:#7c5e10; }
+  .disclaimer { background:var(--box-warn-bg); border:1px solid var(--box-warn-border); border-radius:10px;
+                padding:16px 18px; font-size:0.9em; color:var(--box-warn-text); }
   .glossary dt { font-weight:700; margin-top:10px; }
   .glossary dd { margin:2px 0 0; color:var(--muted); }
   footer { text-align:center; color:var(--muted); font-size:0.8em; margin-top:30px; }
   .missing { color:var(--muted); font-style:italic; }
   svg text { font-size:11px; }
   .unit-note { color:var(--muted); font-size:0.8em; font-weight:400; }
-  .advice-box { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px 16px; margin:10px 0; font-size:0.92em; }
+  .advice-box { background:var(--box-advice-bg); border:1px solid var(--box-advice-border); border-radius:10px; padding:14px 16px; margin:10px 0; font-size:0.92em; }
   .grade-def-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin:10px 0; }
   .grade-def-item { display:flex; align-items:flex-start; gap:8px; font-size:0.88em; }
 </style>
@@ -85,14 +105,14 @@
   {% endif %}
 
   <section class="card">
-    <h2>1. 基本情報</h2>
+    <h2>{{ sec.basic }}. 基本情報</h2>
     <div class="kpi-grid">
       <div class="kpi"><div class="label">証券コード</div><div class="value">{{ company.code }}</div></div>
       <div class="kpi"><div class="label">業種</div><div class="value">{{ company.sector or "―" }}</div></div>
       <div class="kpi"><div class="label">株価</div><div class="value">{{ "%.1f"|format(company.price) if company.price is not none else "―" }} 円</div></div>
       <div class="kpi"><div class="label">時価総額</div><div class="value">{{ "%.0f"|format(market_cap_oku) if market_cap_oku is not none else "―" }} 億円</div></div>
-      <div class="kpi"><div class="label">PER</div><div class="value">{{ company.per if company.per is not none else "―" }} 倍</div></div>
-      <div class="kpi"><div class="label">PBR</div><div class="value">{{ company.pbr if company.pbr is not none else "―" }} 倍</div></div>
+      <div class="kpi"><div class="label">{{ price_basis.per_label }}</div><div class="value">{{ company.per if company.per is not none else "―" }} 倍</div></div>
+      <div class="kpi"><div class="label">{{ price_basis.pbr_label }}</div><div class="value">{{ company.pbr if company.pbr is not none else "―" }} 倍</div></div>
       <div class="kpi"><div class="label">配当利回り</div><div class="value">{{ company.dividend_yield if company.dividend_yield is not none else "―" }} %</div></div>
       <div class="kpi"><div class="label">PSR</div><div class="value">{{ "%.2f"|format(valuation_ratios.psr) if valuation_ratios.psr is not none else "―" }} 倍</div></div>
       <div class="kpi"><div class="label">PCFR</div><div class="value">{{ "%.2f"|format(valuation_ratios.pcfr) if valuation_ratios.pcfr is not none else "―" }} 倍</div></div>
@@ -102,10 +122,47 @@
       PSR・PCFR・EV/EBITDAは、赤字企業や減価償却の大きい設備投資型企業でPERが機能しない場合の補助指標です。
       {% if valuation_ratios.ev_ebitda is none %}EV/EBITDAの算出には減価償却費・有利子負債・現金のデータが必要です(manual_dataまたはEDINET連携で補完してください)。{% endif %}
     </p>
+
+    <h3>株価指標の基準時点</h3>
+    <table>
+      <tr><th>指標</th><th>使用した数値</th></tr>
+      <tr><td>{{ price_basis.per_label }}</td><td>{{ price_basis.per_basis }}</td></tr>
+      <tr><td>{{ price_basis.pbr_label }}</td><td>{{ price_basis.pbr_basis }}</td></tr>
+      <tr><td>株価基準日</td><td>{{ price_basis.price_as_of }}(生成日時: {{ generated_at }})</td></tr>
+    </table>
+    <p class="note">
+      異なる時点の株価・EPS・BPSを混ぜないよう、それぞれの基準を明示しています。
+      PERは会社予想EPS、PBRは直近実績BPSを使うため、対象期間が異なります。
+    </p>
+
+    {% if valuation_ratios.ev is not none or valuation_ratios.ebitda is not none %}
+    <h3>EV/EBITDAの計算根拠 <span class="unit-note">({{ valuation_ratios.basis }}・{{ valuation_ratios.period_label }}期ベース、単位: 百万円)</span></h3>
+    <table>
+      <tr><th>項目</th><th>金額</th></tr>
+      <tr><td>時価総額</td><td>{{ "{:,.0f}".format(valuation_ratios.components.market_cap) if valuation_ratios.components.market_cap is not none else "N/A" }}</td></tr>
+      {% for row in valuation_ratios.components.debt_breakdown %}
+      <tr><td>＋ {{ row.label }}</td><td>{{ "{:,.0f}".format(row.value) }}</td></tr>
+      {% endfor %}
+      <tr><td>＋ 有利子負債 合計</td><td>{{ "{:,.0f}".format(valuation_ratios.components.interest_bearing_debt) if valuation_ratios.components.interest_bearing_debt is not none else "N/A" }}</td></tr>
+      <tr><td>－ 現金及び預金</td><td>{{ "{:,.0f}".format(valuation_ratios.components.cash_and_deposits) if valuation_ratios.components.cash_and_deposits is not none else "N/A" }}</td></tr>
+      <tr style="font-weight:bold;"><td>＝ EV(企業価値)</td><td>{{ "{:,.0f}".format(valuation_ratios.ev) if valuation_ratios.ev is not none else "N/A" }}</td></tr>
+      <tr><td>営業利益</td><td>{{ "{:,.0f}".format(valuation_ratios.components.operating_income) if valuation_ratios.components.operating_income is not none else "N/A" }}</td></tr>
+      <tr><td>＋ 減価償却費</td><td>{{ "{:,.0f}".format(valuation_ratios.components.depreciation_amortization) if valuation_ratios.components.depreciation_amortization is not none else "N/A" }}</td></tr>
+      <tr style="font-weight:bold;"><td>＝ EBITDA</td><td>{{ "{:,.0f}".format(valuation_ratios.ebitda) if valuation_ratios.ebitda is not none else "N/A" }}</td></tr>
+      <tr style="font-weight:bold;"><td>EV ÷ EBITDA</td><td>{{ "%.2f"|format(valuation_ratios.ev_ebitda) ~ " 倍" if valuation_ratios.ev_ebitda is not none else "N/A" }}</td></tr>
+    </table>
+    <p class="note">
+      EV = 時価総額 + 有利子負債 − 現金及び預金、EBITDA = 営業利益 + 減価償却費。
+      有利子負債は上記の科目を合算しています(1年内返済予定の長期借入金を含む)。
+      時価総額以外は {{ valuation_ratios.period_label }}期の実績値で揃えており、TTM・会社予想とは混在させていません。
+      PSR = 時価総額 ÷ 売上高({{ "{:,.0f}".format(valuation_ratios.components.revenue) if valuation_ratios.components.revenue is not none else "N/A" }})、
+      PCFR = 時価総額 ÷ 営業CF({{ "{:,.0f}".format(valuation_ratios.components.operating_cf) if valuation_ratios.components.operating_cf is not none else "N/A" }})。
+    </p>
+    {% endif %}
   </section>
 
   <section class="card">
-    <h2>2. 事業内容</h2>
+    <h2>{{ sec.business }}. 事業内容</h2>
     <p>{{ company.business_summary or "取得できませんでした。" }}</p>
     {% if business_overview %}
     <p class="note"><strong>事業構成の自動要約(データから機械的に生成):</strong> {{ business_overview }}</p>
@@ -120,7 +177,7 @@
   </section>
 
   <section class="card">
-    <h2>3. 業績推移(通期) <span class="unit-note">(単位: 百万円。1株益・1株配のみ円)</span></h2>
+    <h2>{{ sec.annual }}. 業績推移(通期) <span class="unit-note">(単位: 百万円。1株益・1株配のみ円)</span></h2>
     {{ charts.revenue_chart|safe }}
     {{ charts.profit_chart|safe }}
     <table>
@@ -142,7 +199,7 @@
 
   {% if quarterly_analysis %}
   <section class="card">
-    <h2>4. 四半期業績の推移(直近8四半期) <span class="unit-note">(単位: 百万円)</span></h2>
+    <h2>{{ sec.quarterly }}. 四半期業績の推移(直近8四半期) <span class="unit-note">(単位: 百万円)</span></h2>
     <div class="advice-box">
       <strong>プロ投資家目線のアドバイス:</strong> {{ quarterly_advice }}
     </div>
@@ -177,7 +234,7 @@
 
   {% if segments %}
   <section class="card">
-    <h2>5. 事業セグメント別の売上高・利益 <span class="unit-note">(単位: 百万円)</span></h2>
+    <h2>{{ sec.segments }}. 事業セグメント別の売上高・利益 <span class="unit-note">(単位: 百万円)</span></h2>
     <p class="note">
       どの事業が稼ぎ頭かを確認できます。出典: EDINET(有価証券報告書のセグメント情報注記)。
       セグメント名・区分は会社が独自に設定しているため、他社と単純比較はできません。
@@ -215,7 +272,7 @@
   {% endif %}
 
   <section class="card">
-    <h2>6. 財務諸表の要約</h2>
+    <h2>{{ sec.financials }}. 財務諸表の要約</h2>
     <h3>貸借対照表(要約) <span class="unit-note">(単位: 百万円)</span></h3>
     <table>
       <tr><th>決算期</th><th>総資産</th><th>自己資本</th><th>自己資本比率</th><th>剰余金</th></tr>
@@ -258,51 +315,105 @@
     </table>
   </section>
 
+  {% macro level_cell(m) %}
+    {% if m.level and m.level != "判定不能" %}{{ m.level }}{% else %}判定不能{% endif %}
+  {% endmacro %}
+  {% macro pct(v) %}{% if v is not none %}{{ "%.1f"|format(v) }}%{% else %}<span class="missing">N/A</span>{% endif %}{% endmacro %}
+
   <section class="card">
-    <h2>7. 財務指標</h2>
-    <p class="note">「判定」列は、各指標が目安・健全ラインを満たすか(OK)を機械的に判定したものです。「―」は絶対的な合否基準が無い指標です。</p>
+    <h2>{{ sec.indicators }}. 財務指標</h2>
+    <p class="note">
+      「判定」列は段階評価です ―― <strong>良好</strong>(基準を十分に満たす)／<strong>標準</strong>(概ね問題ない水準)／
+      <strong>要観察</strong>(基準を少し外れており推移を見たい)／<strong>注意</strong>(基準から大きく外れる)／
+      <strong>判定不能</strong>(データ不足、または業種差が大きく絶対基準が無い指標)。
+      業種・企業規模で適正水準が異なるため、境界を僅かに超えただけで「不合格」とは扱いません。
+    </p>
+    {% for w in consistency_warnings %}
+    <p class="note" style="color:var(--bad);">⚠ {{ w }}</p>
+    {% endfor %}
 
     <h3>① 健全性</h3>
     <table>
       <tr><th>指標</th><th>値</th><th>健全ライン</th><th>危険ライン</th><th>判定</th></tr>
-      <tr><td>自己資本比率</td><td>{{ "%.1f"|format(health_metrics.equity_ratio.value) if health_metrics.equity_ratio.value is not none else "―" }}%</td><td>{{ health_metrics.equity_ratio.healthy }}</td><td>{{ health_metrics.equity_ratio.danger }}</td><td>{{ "OK" if health_metrics.equity_ratio.ok else ("NG" if health_metrics.equity_ratio.ok is not none else "―") }}</td></tr>
-      <tr><td>負債比率</td><td>{{ "%.1f"|format(health_metrics.debt_ratio.value) if health_metrics.debt_ratio.value is not none else "データ不足" }}{% if health_metrics.debt_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.debt_ratio.healthy }}</td><td>{{ health_metrics.debt_ratio.danger }}</td><td>{{ "OK" if health_metrics.debt_ratio.ok else ("NG" if health_metrics.debt_ratio.ok is not none else "―") }}</td></tr>
-      <tr><td>流動比率</td><td>{{ "%.1f"|format(health_metrics.current_ratio.value) if health_metrics.current_ratio.value is not none else "データ不足" }}{% if health_metrics.current_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.current_ratio.healthy }}</td><td>{{ health_metrics.current_ratio.danger }}</td><td>{{ "OK" if health_metrics.current_ratio.ok else ("NG" if health_metrics.current_ratio.ok is not none else "―") }}</td></tr>
-      <tr><td>当座比率</td><td>{{ "%.1f"|format(health_metrics.quick_ratio.value) if health_metrics.quick_ratio.value is not none else "データ不足" }}{% if health_metrics.quick_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.quick_ratio.healthy }}</td><td>―</td><td>{{ "OK" if health_metrics.quick_ratio.ok else ("NG" if health_metrics.quick_ratio.ok is not none else "―") }}</td></tr>
-      <tr><td>固定比率</td><td>{{ "%.1f"|format(health_metrics.fixed_ratio.value) if health_metrics.fixed_ratio.value is not none else "データ不足" }}{% if health_metrics.fixed_ratio.value is not none %}%{% endif %}</td><td>{{ health_metrics.fixed_ratio.healthy }}</td><td>{{ health_metrics.fixed_ratio.danger }}</td><td>{{ "OK" if health_metrics.fixed_ratio.ok else ("NG" if health_metrics.fixed_ratio.ok is not none else "―") }}</td></tr>
+      <tr><td>自己資本比率</td><td>{{ pct(health_metrics.equity_ratio.value) }}</td><td>{{ health_metrics.equity_ratio.healthy }}</td><td>{{ health_metrics.equity_ratio.danger }}</td><td>{{ level_cell(health_metrics.equity_ratio) }}</td></tr>
+      <tr><td>負債比率</td><td>{{ pct(health_metrics.debt_ratio.value) }}</td><td>{{ health_metrics.debt_ratio.healthy }}</td><td>{{ health_metrics.debt_ratio.danger }}</td><td>{{ level_cell(health_metrics.debt_ratio) }}</td></tr>
+      <tr><td>流動比率</td><td>{{ pct(health_metrics.current_ratio.value) }}</td><td>{{ health_metrics.current_ratio.healthy }}</td><td>{{ health_metrics.current_ratio.danger }}</td><td>{{ level_cell(health_metrics.current_ratio) }}</td></tr>
+      <tr><td>当座比率</td><td>{{ pct(health_metrics.quick_ratio.value) }}</td><td>{{ health_metrics.quick_ratio.healthy }}</td><td>{{ health_metrics.quick_ratio.danger }}</td><td>{{ level_cell(health_metrics.quick_ratio) }}</td></tr>
+      <tr><td>固定比率</td><td>{{ pct(health_metrics.fixed_ratio.value) }}</td><td>{{ health_metrics.fixed_ratio.healthy }}</td><td>{{ health_metrics.fixed_ratio.danger }}</td><td>{{ level_cell(health_metrics.fixed_ratio) }}</td></tr>
+      <tr><td>固定長期適合率</td><td>{{ pct(health_metrics.fixed_long_term_ratio.value) }}</td><td>{{ health_metrics.fixed_long_term_ratio.healthy }}</td><td>{{ health_metrics.fixed_long_term_ratio.danger }}</td><td>{{ level_cell(health_metrics.fixed_long_term_ratio) }}</td></tr>
     </table>
+    <p class="note">
+      流動比率 = 流動資産 ÷ 流動負債 × 100、当座比率 = 当座資産 ÷ 流動負債 × 100。
+      {% if health_metrics.quick_ratio.components %}
+      当座資産に算入した科目(単位: 百万円):
+      {% for c in health_metrics.quick_ratio.components %}{{ c.label }} {{ "{:,.0f}".format(c.value) }}{% if not loop.last %} ＋ {% endif %}{% endfor %}。
+      {% endif %}
+      棚卸資産・投資有価証券(固定)・有形無形固定資産・長期貸付金は当座資産に含めていません。
+      固定長期適合率 = 固定資産 ÷(自己資本 ＋ 固定負債)× 100。
+    </p>
 
     <h3>② 収益性</h3>
     <table>
       <tr><th>指標</th><th>値</th><th>目安</th><th>判定</th></tr>
-      <tr><td>売上総利益率</td><td>{{ "%.1f"|format(profitability_metrics.gross_margin.value) if profitability_metrics.gross_margin.value is not none else "データ不足" }}{% if profitability_metrics.gross_margin.value is not none %}%{% endif %}</td><td>{{ profitability_metrics.gross_margin.good }}</td><td>{{ "OK" if profitability_metrics.gross_margin.ok else ("NG" if profitability_metrics.gross_margin.ok is not none else "―") }}</td></tr>
-      <tr><td>営業利益率</td><td>{{ "%.1f"|format(profitability_metrics.operating_margin.value) if profitability_metrics.operating_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.operating_margin.good }}</td><td>{{ "OK" if profitability_metrics.operating_margin.ok else ("NG" if profitability_metrics.operating_margin.ok is not none else "―") }}</td></tr>
-      <tr><td>経常利益率</td><td>{{ "%.1f"|format(profitability_metrics.ordinary_margin.value) if profitability_metrics.ordinary_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.ordinary_margin.good }}</td><td>―</td></tr>
-      <tr><td>純利益率</td><td>{{ "%.1f"|format(profitability_metrics.net_margin.value) if profitability_metrics.net_margin.value is not none else "―" }}%</td><td>{{ profitability_metrics.net_margin.good }}</td><td>{{ "OK" if profitability_metrics.net_margin.ok else ("NG" if profitability_metrics.net_margin.ok is not none else "―") }}</td></tr>
-      <tr><td>ROE</td><td>{{ "%.1f"|format(profitability_metrics.roe.value) if profitability_metrics.roe.value is not none else "―" }}%</td><td>{{ profitability_metrics.roe.good }}</td><td>{{ "OK" if profitability_metrics.roe.ok else ("NG" if profitability_metrics.roe.ok is not none else "―") }}</td></tr>
-      <tr><td>ROA</td><td>{{ "%.1f"|format(profitability_metrics.roa.value) if profitability_metrics.roa.value is not none else "―" }}%</td><td>{{ profitability_metrics.roa.good }}</td><td>{{ "OK" if profitability_metrics.roa.ok else ("NG" if profitability_metrics.roa.ok is not none else "―") }}</td></tr>
-      <tr><td>ROIC</td><td>{{ "%.1f"|format(roic.value) if roic.value is not none else "データ不足" }}{% if roic.value is not none %}%{% endif %}</td><td>{{ profitability_metrics.roic.good }}</td><td>{{ "OK" if profitability_metrics.roic.ok else ("NG" if profitability_metrics.roic.ok is not none else "―") }}</td></tr>
+      <tr><td>売上総利益率</td><td>{{ pct(profitability_metrics.gross_margin.value) }}</td><td>{{ profitability_metrics.gross_margin.good }}</td><td>{{ level_cell(profitability_metrics.gross_margin) }}</td></tr>
+      <tr><td>営業利益率</td><td>{{ pct(profitability_metrics.operating_margin.value) }}</td><td>{{ profitability_metrics.operating_margin.good }}</td><td>{{ level_cell(profitability_metrics.operating_margin) }}</td></tr>
+      <tr><td>経常利益率</td><td>{{ pct(profitability_metrics.ordinary_margin.value) }}</td><td>{{ profitability_metrics.ordinary_margin.good }}</td><td>判定不能</td></tr>
+      <tr><td>純利益率</td><td>{{ pct(profitability_metrics.net_margin.value) }}</td><td>{{ profitability_metrics.net_margin.good }}</td><td>{{ level_cell(profitability_metrics.net_margin) }}</td></tr>
+      <tr><td>ROE</td><td>{{ pct(profitability_metrics.roe.value) }}</td><td>{{ profitability_metrics.roe.good }}</td><td>{{ level_cell(profitability_metrics.roe) }}</td></tr>
+      <tr><td>ROA</td><td>{{ pct(profitability_metrics.roa.value) }}</td><td>{{ profitability_metrics.roa.good }}</td><td>{{ level_cell(profitability_metrics.roa) }}</td></tr>
+      <tr><td>ROIC</td><td>{{ pct(roic.value) }}</td><td>{{ profitability_metrics.roic.good }}</td><td>{{ level_cell(profitability_metrics.roic) }}</td></tr>
     </table>
     <p class="note">
-      ROICの実効税率は{% if roic.tax_rate_is_estimated %}法定実効税率の目安({{ "%.0f"|format(roic.tax_rate * 100) }}%)を使用しています(実績値が算出できなかったため)。{% else %}実績値({{ "%.1f"|format(roic.tax_rate * 100) }}%)から算出しています。{% endif %}
+      ROIC = NOPAT ÷ 投下資本。NOPAT = 営業利益 × (1 − 実効税率)、投下資本 = 有利子負債 ＋ 自己資本。
+      使用税率: <strong>{{ "%.2f"|format(roic.tax_rate * 100) }}%</strong>({{ roic.tax_rate_basis }})。
+      {% if roic.nopat is not none %}NOPAT {{ "{:,.0f}".format(roic.nopat) }}百万円 ÷ 投下資本 {{ "{:,.0f}".format(roic.invested_capital) }}百万円。{% endif %}
     </p>
+    {% if roic.tax_rate_warning %}
+    <p class="note" style="color:var(--warn);">⚠ {{ roic.tax_rate_warning }}</p>
+    {% endif %}
 
     <h3>④ 利益の質(アクルーアル比率・簡易F-Score)</h3>
     <table>
       <tr><th>指標</th><th>値</th><th>目安</th></tr>
       <tr><td>アクルーアル比率</td><td>{{ "%.1f"|format(accrual_ratio.value) if accrual_ratio.value is not none else "データ不足" }}{% if accrual_ratio.value is not none %}%{% endif %}</td><td>{{ accrual_ratio.good }}</td></tr>
     </table>
+    {% if adjusted_profit.available %}
+    <table>
+      <tr><th>一過性損益の調整</th><th>金額(百万円)</th></tr>
+      <tr><td>特別利益</td><td>{{ "{:,.0f}".format(adjusted_profit.extraordinary_income) }}</td></tr>
+      <tr><td>特別損失</td><td>{{ "{:,.0f}".format(adjusted_profit.extraordinary_loss) }}</td></tr>
+      <tr><td>特別損益(純額)</td><td>{{ "{:,.0f}".format(adjusted_profit.net_extraordinary) }}</td></tr>
+      <tr style="font-weight:bold;"><td>調整後純利益(特別損益を除く)</td><td>{{ "{:,.0f}".format(adjusted_profit.adjusted_net_income) }}</td></tr>
+      <tr><td>調整後ROA</td><td>{{ pct(adjusted_profit.adjusted_roa) }}</td></tr>
+      <tr><td>(参考)報告ベースROA</td><td>{{ pct(adjusted_profit.reported_roa) }}</td></tr>
+    </table>
+    <p class="note">
+      調整後純利益 = 純利益 −(特別利益 − 特別損失)×(1 − 実効税率 {{ "%.2f"|format(adjusted_profit.tax_rate * 100) }}%)。
+      {% if adjusted_profit.is_material %}
+      <span style="color:var(--warn);">⚠ 特別損益が税引前利益の20%を超えており、純利益の増減には一過性要因が含まれます。</span>
+      {% endif %}
+    </p>
+    {% else %}
+    <p class="note">特別損益のデータが取得できないため、調整後利益は<span class="missing">確認不能</span>です。</p>
+    {% endif %}
+
     {% if fscore.score is not none %}
-    <p>簡易F-Score: <strong>{{ fscore.score }} / {{ fscore.max_score }}</strong></p>
+    <p>簡易F-Score(参考値): <strong>{{ fscore.score }} / {{ fscore.max_score }}</strong></p>
     <table>
       <tr><th>チェック項目</th><th>判定</th></tr>
       {% for c in fscore.checks %}
       <tr>
         <td>{{ c.label }}</td>
-        <td>{% if c.passed is none %}判定不可{% elif c.passed %}<span class="pill ok">満たす</span>{% else %}<span class="pill" style="background:#fee2e2;color:#991b1b;">満たさない</span>{% endif %}</td>
+        <td>{% if c.passed is none %}判定不能{% elif c.passed %}<span class="pill ok">満たす</span>{% else %}<span class="pill" style="background:rgba(220,38,38,0.12);color:var(--bad);">満たさない</span>{% endif %}</td>
       </tr>
       {% endfor %}
+      {% if fscore.cumulative_ocf is not none %}
+      <tr><td>(参考){{ fscore.cumulative_ocf_years }}年間の累計営業CF</td><td>{{ "{:,.0f}".format(fscore.cumulative_ocf) }} 百万円</td></tr>
+      {% endif %}
     </table>
+    {% for w in fscore.warnings %}
+    <p class="note" style="color:var(--warn);">⚠ {{ w }}</p>
+    {% endfor %}
     {% else %}
     <p class="note">簡易F-Scoreの算出には2期分以上の業績データが必要です。</p>
     {% endif %}
@@ -310,11 +421,11 @@
     <h3>③ 成長性</h3>
     <table>
       <tr><th>指標</th><th>値</th><th>目安</th><th>判定</th></tr>
-      <tr><td>売上高成長率</td><td>{{ "%.1f"|format(growth_metrics.revenue_growth.value) if growth_metrics.revenue_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.revenue_growth.good }}</td><td>{{ "OK" if growth_metrics.revenue_growth.ok else ("NG" if growth_metrics.revenue_growth.ok is not none else "―") }}</td></tr>
-      <tr><td>営業利益成長率</td><td>{{ "%.1f"|format(growth_metrics.operating_income_growth.value) if growth_metrics.operating_income_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.operating_income_growth.good }}</td><td>{{ "OK" if growth_metrics.operating_income_growth.ok else ("NG" if growth_metrics.operating_income_growth.ok is not none else "―") }}</td></tr>
-      <tr><td>純利益成長率</td><td>{{ "%.1f"|format(growth_metrics.net_income_growth.value) if growth_metrics.net_income_growth.value is not none else "―" }}%</td><td>{{ growth_metrics.net_income_growth.good }}</td><td>{{ "OK" if growth_metrics.net_income_growth.ok else ("NG" if growth_metrics.net_income_growth.ok is not none else "―") }}</td></tr>
-      <tr><td>総資産回転率</td><td>{{ "%.2f"|format(growth_metrics.asset_turnover.value) if growth_metrics.asset_turnover.value is not none else "―" }}回</td><td>{{ growth_metrics.asset_turnover.good }}</td><td>{{ "OK" if growth_metrics.asset_turnover.ok else ("NG" if growth_metrics.asset_turnover.ok is not none else "―") }}</td></tr>
-      <tr><td>売上債権回転率</td><td>{{ "%.2f"|format(growth_metrics.receivables_turnover.value) if growth_metrics.receivables_turnover.value is not none else "データ不足" }}{% if growth_metrics.receivables_turnover.value is not none %}回{% endif %}</td><td>{{ growth_metrics.receivables_turnover.good }}</td><td>―</td></tr>
+      <tr><td>売上高成長率</td><td>{{ pct(growth_metrics.revenue_growth.value) }}</td><td>{{ growth_metrics.revenue_growth.good }}</td><td>{{ level_cell(growth_metrics.revenue_growth) }}</td></tr>
+      <tr><td>営業利益成長率</td><td>{{ pct(growth_metrics.operating_income_growth.value) }}</td><td>{{ growth_metrics.operating_income_growth.good }}</td><td>{{ level_cell(growth_metrics.operating_income_growth) }}</td></tr>
+      <tr><td>純利益成長率</td><td>{{ pct(growth_metrics.net_income_growth.value) }}</td><td>{{ growth_metrics.net_income_growth.good }}</td><td>{{ level_cell(growth_metrics.net_income_growth) }}</td></tr>
+      <tr><td>総資産回転率</td><td>{% if growth_metrics.asset_turnover.value is not none %}{{ "%.2f"|format(growth_metrics.asset_turnover.value) }}回{% else %}<span class="missing">N/A</span>{% endif %}</td><td>{{ growth_metrics.asset_turnover.good }}</td><td>{{ level_cell(growth_metrics.asset_turnover) }}</td></tr>
+      <tr><td>売上債権回転率</td><td>{% if growth_metrics.receivables_turnover.value is not none %}{{ "%.2f"|format(growth_metrics.receivables_turnover.value) }}回{% else %}<span class="missing">N/A</span>{% endif %}</td><td>{{ growth_metrics.receivables_turnover.good }}</td><td>判定不能</td></tr>
     </table>
 
     <h3>🚩 危険信号フラグ</h3>
@@ -335,7 +446,7 @@
 
   {% if major_shareholders %}
   <section class="card">
-    <h2>8. 株主構成・ガバナンス</h2>
+    <h2>{{ sec.shareholders }}. 株主構成・ガバナンス</h2>
     <p class="note">出典: EDINET(有価証券報告書「大株主の状況」)。上位10名までを表示しています。</p>
     <table>
       <tr><th>株主名</th><th>所有割合</th></tr>
@@ -356,54 +467,219 @@
   </section>
   {% endif %}
 
+  {% if risk_events %}
   <section class="card">
-    <h2>9. 企業価値の目安 <span class="unit-note">(単位: 百万円)</span></h2>
+    <h2>{{ sec.risk_events }}. 定性リスク・重要イベント</h2>
+    <p class="note">
+      出典: EDINET(有価証券報告書の「事業等のリスク」「対処すべき課題」「後発事象」等)。
+      開示されている文をそのまま引用しています。金額が本文に明記されていない項目は
+      推測せず「金額未確定(会社精査中の可能性)」と表示します。
+      網羅性を保証するものではないため、重要な判断の前には原文をご確認ください。
+    </p>
+    <table>
+      <tr><th>検出キーワード</th><th>開示内容(原文)</th><th>金額</th></tr>
+      {% for e in risk_events %}
+      <tr>
+        <td>{{ e.keywords|join("、") }}<br><span class="note">{{ e.section }}</span></td>
+        <td style="text-align:left;">{{ e.text }}</td>
+        <td>{% if e.amount_text %}{{ e.amount_text }}{% else %}<span class="missing">金額未確定</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+  {% endif %}
+
+  <section class="card">
+    <h2>{{ sec.valuation }}. 企業価値の目安 <span class="unit-note">(単位: 百万円)</span></h2>
     <div class="kpi-grid">
       <div class="kpi">
-        <div class="label">清算価値</div>
-        <div class="value">{% if liquidation.value is not none %}{{ "{:,.0f}".format(liquidation.value) }} 百万円{% else %}<span class="missing">データ不足</span>{% endif %}</div>
+        <div class="label">簡易修正純資産</div>
+        <div class="value">{% if liquidation.value is not none %}{{ "{:,.0f}".format(liquidation.value) }} 百万円{% else %}<span class="missing">確認不能</span>{% endif %}</div>
       </div>
+      {% for sc in dcf.scenarios %}
       <div class="kpi">
-        <div class="label">DCF弱気シナリオ</div>
-        <div class="value">{% if dcf.bear_case is not none %}{{ "{:,.0f}".format(dcf.bear_case) }} 百万円{% else %}<span class="missing">データ不足</span>{% endif %}</div>
+        <div class="label">DCF{{ sc.label }}(株主価値)</div>
+        <div class="value">{% if sc.equity_value is not none %}{{ "{:,.0f}".format(sc.equity_value) }} 百万円{% else %}<span class="missing">N/A</span>{% endif %}</div>
       </div>
+      {% endfor %}
       <div class="kpi">
-        <div class="label">DCF強気シナリオ</div>
-        <div class="value">{% if dcf.bull_case is not none %}{{ "{:,.0f}".format(dcf.bull_case) }} 百万円{% else %}<span class="missing">データ不足</span>{% endif %}</div>
-      </div>
-      <div class="kpi">
-        <div class="label">ネットキャッシュ枯渇年数</div>
+        <div class="label">{{ net_cash.label or "ネットキャッシュ" }}</div>
         <div class="value">
-          {% if cash_depletion.applicable == false %}該当なし(黒字)
-          {% elif cash_depletion.years is not none %}{{ "%.1f"|format(cash_depletion.years) }} 年
-          {% else %}<span class="missing">データ不足</span>{% endif %}
+          {% if net_cash.narrow is not none %}{{ "{:,.0f}".format(net_cash.narrow) }} 百万円
+          {% else %}<span class="missing">確認不能</span>{% endif %}
         </div>
       </div>
     </div>
+
+    <h3>ネットキャッシュ(手元資金 − 有利子負債)</h3>
+    {% if net_cash.available %}
+    <table>
+      <tr><th>項目</th><th>金額</th></tr>
+      <tr><td>現金及び預金</td><td>{{ "{:,.0f}".format(net_cash.cash) }}</td></tr>
+      <tr><td>＋ 有価証券(流動)</td><td>{{ "{:,.0f}".format(net_cash.securities) }}</td></tr>
+      <tr><td>－ 有利子負債</td><td>{{ "{:,.0f}".format(net_cash.debt) }}</td></tr>
+      <tr style="font-weight:bold;"><td>＝ 狭義ネットキャッシュ</td><td>{{ "{:,.0f}".format(net_cash.narrow) }}</td></tr>
+      <tr><td>＋ 投資有価証券(固定)</td><td>{% if net_cash.investment_securities is not none %}{{ "{:,.0f}".format(net_cash.investment_securities) }}{% else %}N/A{% endif %}</td></tr>
+      <tr style="font-weight:bold;"><td>＝ 有価証券込み修正ネットキャッシュ</td><td>{% if net_cash.adjusted is not none %}{{ "{:,.0f}".format(net_cash.adjusted) }}{% else %}N/A{% endif %}</td></tr>
+    </table>
+    <p class="note">
+      {% if net_cash.narrow >= 0 %}手元資金が有利子負債を上回る「ネットキャッシュ」の状態です。
+      {% else %}有利子負債が手元資金を上回る「ネットデット」の状態です。{% endif %}
+      {% if net_cash.depletion_applicable and net_cash.years is not none %}
+        営業CFがマイナス({{ "{:,.0f}".format(net_cash.operating_cf) }}百万円)のため、
+        現在のネットキャッシュは約 {{ "%.1f"|format(net_cash.years) }} 年分に相当します。
+      {% elif net_cash.depletion_applicable %}
+        営業CFがマイナスですが、ネットキャッシュがマイナスのため枯渇年数は算出していません。
+      {% else %}
+        営業CFはプラスのため、枯渇年数は算出していません(利益の黒字・赤字とネットキャッシュは別概念です)。
+      {% endif %}
+    </p>
+    {% else %}
+    <p class="note"><span class="missing">確認不能</span>(現金及び預金・有利子負債のデータが取得できませんでした)</p>
+    {% endif %}
+
+    <h3>DCF法による株主価値</h3>
+    {% if not dcf.available %}
+    <p class="note" style="color:var(--warn);">⚠ {{ dcf.reason }}</p>
+    {% if dcf.base_fcf is not none %}
+    <p class="note">基準FCF: {{ "{:,.0f}".format(dcf.base_fcf) }} 百万円(定義: {{ dcf.fcf_definition }})</p>
+    {% endif %}
+    {% else %}
+    <table>
+      <tr><th>前提条件</th><th>内容</th></tr>
+      <tr><td>基準FCF</td><td>{{ "{:,.0f}".format(dcf.base_fcf) }} 百万円({{ latest_period }}期実績)</td></tr>
+      <tr><td>FCFの定義</td><td>{{ dcf.fcf_definition }}<br>営業CF {{ "{:,.0f}".format(dcf.operating_cf) }} ＋ 投資CF {{ "{:,.0f}".format(dcf.investing_cf) }}</td></tr>
+      <tr><td>予測年数</td><td>{{ dcf.forecast_years }} 年(6年目以降はターミナルバリューで評価)</td></tr>
+      <tr><td>現金(株主価値への加算)</td><td>{{ "{:,.0f}".format(dcf.cash) }} 百万円</td></tr>
+      <tr><td>有利子負債(株主価値からの減算)</td><td>{{ "{:,.0f}".format(dcf.debt) }} 百万円</td></tr>
+      <tr><td>発行済株式数(自己株式控除後)</td><td>{% if dcf.shares_outstanding %}{{ "{:,.0f}".format(dcf.shares_outstanding) }} 株{% else %}N/A{% endif %}</td></tr>
+    </table>
+
+    <table>
+      <tr>
+        <th>シナリオ</th><th>FCF成長率</th><th>WACC</th><th>永久成長率</th>
+        <th>予測期間FCFの現在価値</th><th>ターミナルバリュー</th><th>TVの現在価値</th>
+        <th>企業価値(EV)</th><th>株主価値</th><th>1株あたり</th><th>TV比率</th>
+      </tr>
+      {% for sc in dcf.scenarios %}
+      <tr>
+        <td>{{ sc.label }}</td>
+        <td>{{ "%.1f"|format(sc.growth * 100) }}%</td>
+        <td>{{ "%.1f"|format(sc.wacc * 100) }}%</td>
+        <td>{{ "%.1f"|format(sc.terminal_growth * 100) }}%</td>
+        {% if sc.error %}
+        <td colspan="7" style="text-align:left;color:var(--warn);">N/A ―― {{ sc.error }}</td>
+        {% else %}
+        <td>{{ "{:,.0f}".format(sc.pv_forecast) }}</td>
+        <td>{{ "{:,.0f}".format(sc.terminal_value) }}</td>
+        <td>{{ "{:,.0f}".format(sc.pv_terminal) }}</td>
+        <td>{{ "{:,.0f}".format(sc.enterprise_value) }}</td>
+        <td style="font-weight:bold;">{{ "{:,.0f}".format(sc.equity_value) }}</td>
+        <td>{% if sc.per_share is not none %}{{ "%.0f"|format(sc.per_share) }} 円{% else %}N/A{% endif %}</td>
+        <td>{{ "%.0f"|format(sc.terminal_ratio * 100) }}%</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="note">
+      株主価値 = 企業価値(予測期間FCFの現在価値 ＋ ターミナルバリューの現在価値) ＋ 現金 − 有利子負債。
+      ターミナルバリューは {{ dcf.forecast_years }}年目のFCF×(1+永久成長率)÷(WACC−永久成長率) で求め、
+      (1+WACC)^{{ dcf.forecast_years }} で現在価値に割り引いています。
+      永久成長率がWACC以上になる組み合わせは計算不能(N/A)としています。
+      {% if dcf.monotonic_ok %}弱気 ≦ 標準 ≦ 強気 の関係が成立していることを確認済みです。{% endif %}
+    </p>
+    {% for w in dcf.warnings %}
+    <p class="note" style="color:var(--warn);">⚠ {{ w }}</p>
+    {% endfor %}
+
+    <h3>年ごとのFCF予測と現在価値 <span class="unit-note">(単位: 百万円)</span></h3>
+    <table>
+      <tr>
+        <th>シナリオ</th>
+        {% for y in range(1, dcf.forecast_years + 1) %}<th>{{ y }}年目</th>{% endfor %}
+      </tr>
+      {% for sc in dcf.scenarios %}{% if not sc.error %}
+      <tr>
+        <td>{{ sc.label }}(FCF)</td>
+        {% for f in sc.yearly %}<td>{{ "{:,.0f}".format(f.fcf) }}</td>{% endfor %}
+      </tr>
+      <tr>
+        <td>{{ sc.label }}(現在価値)</td>
+        {% for f in sc.yearly %}<td>{{ "{:,.0f}".format(f.pv) }}</td>{% endfor %}
+      </tr>
+      {% endif %}{% endfor %}
+    </table>
+
+    <h3>感応度分析(株主価値) <span class="unit-note">(単位: 百万円、標準シナリオの成長率前提)</span></h3>
+    <table>
+      <tr>
+        <th>WACC \ 永久成長率</th>
+        {% for g in dcf.sensitivity.terminal_growths %}<th>{{ "%.1f"|format(g * 100) }}%</th>{% endfor %}
+      </tr>
+      {% for row in dcf.sensitivity.rows %}
+      <tr>
+        <td>{{ "%.0f"|format(row.wacc * 100) }}%</td>
+        {% for v in row.cells %}
+        <td>{% if v is not none %}{{ "{:,.0f}".format(v) }}{% else %}N/A{% endif %}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    <h3>簡易修正純資産(資産別の内訳) <span class="unit-note">(単位: 百万円)</span></h3>
     {% if liquidation.missing_fields %}
-    <p class="note">清算価値の算出には以下の項目が不足しています: {{ liquidation.missing_fields|join("、") }}
-      (manual_data/{{ company.code }}.json に入力してください)</p>
+    <p class="note"><span class="missing">確認不能</span> ―― 以下の項目が不足しています:
+      {{ liquidation.missing_fields|join("、") }}(manual_data/{{ company.code }}.json に入力してください)</p>
+    {% else %}
+    <table>
+      <tr><th>資産</th><th>帳簿価額</th><th>回収率(掛け目)</th><th>評価額</th></tr>
+      {% for row in liquidation.rows %}
+      <tr>
+        <td>{{ row.label }}</td>
+        <td>{{ "{:,.0f}".format(row.book_value) }}</td>
+        <td>{{ "%.0f"|format(row.rate * 100) }}%</td>
+        <td>{{ "{:,.0f}".format(row.value) }}</td>
+      </tr>
+      {% endfor %}
+      <tr style="font-weight:bold;"><td>掛け目適用後の資産合計</td><td>{{ "{:,.0f}".format(liquidation.raw_asset_total) }}</td><td>―</td><td>{{ "{:,.0f}".format(liquidation.adjusted_assets) }}</td></tr>
+      <tr><td>－ 総負債</td><td colspan="2">―</td><td>{{ "{:,.0f}".format(liquidation.total_liabilities) }}</td></tr>
+      <tr style="font-weight:bold;"><td>＝ 簡易修正純資産</td><td colspan="2">―</td><td>{{ "{:,.0f}".format(liquidation.value) }}</td></tr>
+    </table>
+    <p class="note">
+      <strong>「清算価値」ではなく「簡易修正純資産」と表記している理由:</strong>
+      実際の清算では次の費用が追加で発生しますが、開示が無く推測もしないため反映していません ――
+      {{ liquidation.unreflected_costs|join("、") }}。したがってこの金額は清算価値の「上限側の目安」です。
+      また、土地の含み益・含み損も帳簿価額のままで、時価評価していません。
+      なお「PBR1倍割れ」は純資産(帳簿価額)に対する株価の水準を指すもので、この簡易修正純資産とは別の概念です。
+    </p>
+    {% if liquidation.double_count_warning %}
+    <p class="note" style="color:var(--bad);">
+      ⚠ 警告: 掛け目対象資産の合計が総資産を上回っています。同じ資産を二重に計上している可能性があるため、
+      科目の分類を確認してください。
+    </p>
     {% endif %}
     {% if liquidation.low_coverage_warning %}
     <p class="note" style="color:var(--warn);">
-      ⚠ 注意: 資産区分(現金・売掛金・棚卸資産・固定資産等)の合計が、
-      総資産のかなりの部分をカバーできていません。金融子会社を持つ会社など、
-      標準的な製造業モデルの区分に当てはまらない資産(金融債権等)が多い場合に
-      起こります。清算価値は実態より低く算出されている可能性があります。
+      ⚠ 注意: 資産区分の合計が総資産の大部分をカバーできていません。金融子会社を持つ会社など、
+      標準的な製造業モデルの区分に当てはまらない資産が多い場合に起こります。
+      簡易修正純資産は実態より低く算出されている可能性があります。
     </p>
     {% endif %}
     {% if liquidation.value is not none and market_cap_million is not none %}
     <p>{% if market_cap_million < liquidation.value %}
-      現在の時価総額は清算価値を下回っており、「PBR1倍割れ」的な割安のサインです。
+      現在の時価総額({{ "{:,.0f}".format(market_cap_million) }}百万円)は簡易修正純資産({{ "{:,.0f}".format(liquidation.value) }}百万円)を下回っています。
+      ただし上記のとおり清算費用等が未反映のため、実際の清算価値を下回っていると断定はできません。
     {% else %}
-      現在の時価総額は清算価値を上回っています。
+      現在の時価総額({{ "{:,.0f}".format(market_cap_million) }}百万円)は簡易修正純資産({{ "{:,.0f}".format(liquidation.value) }}百万円)を上回っています。
     {% endif %}</p>
+    {% endif %}
     {% endif %}
   </section>
 
   {% if breakeven.available %}
   <section class="card">
-    <h2>10. 損益分岐点分析(固定費・変動費の概算) <span class="unit-note">(単位: 百万円)</span></h2>
+    <h2>{{ sec.breakeven }}. 損益分岐点分析(固定費・変動費の概算) <span class="unit-note">(単位: 百万円)</span></h2>
     <div class="advice-box">
       <strong>高低点法による概算:</strong> 売上高が最も多かった{{ breakeven.high_period }}期と、
       最も少なかった{{ breakeven.low_period }}期の実績から、大まかな固定費・変動費の構造を逆算しています。
@@ -425,7 +701,7 @@
   {% endif %}
 
   <section class="card">
-    <h2>11. 投資判断(6項目×5段階評価)</h2>
+    <h2>{{ sec.grades }}. 投資判断(6項目×5段階評価)</h2>
     <h3>評価(A〜E)の基準</h3>
     <div class="grade-def-list">
       {% for d in grade_definitions %}
@@ -438,14 +714,31 @@
       {% for g in grades %}
       <tr>
         <td>{{ g.no }}. {{ g.label }}</td>
-        <td><span class="grade {{ g.grade or 'none' }}">{{ g.grade or "―" }}</span></td>
         <td>
+          {% if g.grade %}<span class="grade {{ g.grade }}">{{ g.grade }}</span>
+          {% else %}<span class="grade none">―</span>{% endif %}
+        </td>
+        <td style="text-align:left;">
           {% if g.no in [3,4,5] %}
-            {% if g.evaluated %}{{ g.passed }} / {{ g.evaluated }} 項目が良好基準を満たす{% else %}<span class="missing">データ不足</span>{% endif %}
+            {% if g.evaluated %}
+              段階評価の平均スコア {{ "%.2f"|format(g.score_ratio) }}({{ g.evaluated }}指標を評価、うち良好・標準は {{ g.passed }} 件)
+            {% else %}<span class="missing">データ不足</span>{% endif %}
           {% elif g.no in [1,2] %}
             {% if g.max_score %}スコア {{ g.score }} / {{ g.max_score }}{% else %}<span class="missing">データ不足</span>{% endif %}
           {% elif g.no == 6 %}
-            配当性向: {% if g.payout_ratio is not none %}{{ "%.1f"|format(g.payout_ratio) }}%{% else %}データ不足{% endif %} ／ {{ g.notes }}
+            {% if g.grade_label %}<strong>{{ g.grade_label }}</strong><br>{% endif %}
+            配当性向: {% if g.payout_ratio is not none %}{{ "%.1f"|format(g.payout_ratio) }}%{% else %}<span class="missing">N/A</span>{% endif %}
+            ／ 連続配当: {{ g.consecutive_years }}期
+            {% if g.dividend_burden is not none %} ／ FCFに対する配当負担: {{ "%.1f"|format(g.dividend_burden) }}%{% endif %}
+            <ul style="margin:6px 0 0;padding-left:1.2em;">
+              {% for c in g.checks %}
+              <li class="note">{{ c.label }}:
+                {% if c.passed is none %}判定不能(データ不足)
+                {% elif c.passed %}該当{% else %}非該当{% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+            {% if g.notes %}<span class="note">{{ g.notes }}</span>{% endif %}
           {% endif %}
         </td>
       </tr>
@@ -493,15 +786,58 @@
     <h2>シクリカルバリュー株としての着眼点</h2>
     <div class="type-section">
       <p>業種「{{ cyclical_type.sector }}」は景気循環の影響を受けやすい業種に分類されます。
-        現在のサイクル位置の目安: <strong>{{ cyclical_type.phase }}</strong>
-        {% if cyclical_type.detail %}({{ cyclical_type.detail }}){% endif %}。
+        総合判断: <strong>{{ cycle_summary.label }}</strong> ―― {{ cycle_summary.detail }}。
         この判定はあくまで機械的な目安であり、断定はできません。</p>
     </div>
+    {% if cycle_signals %}
+    <table>
+      <tr><th>判定材料</th><th>対象期間</th><th>実績/予想</th><th>方向</th><th>内容</th></tr>
+      {% for sig in cycle_signals %}
+      <tr>
+        <td>{{ sig.name }}</td>
+        <td>{{ sig.period }}</td>
+        <td>{{ sig.basis }}</td>
+        <td>{{ sig.direction }}</td>
+        <td style="text-align:left;">{{ sig.detail }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="note">
+      通期実績だけでなく、直近四半期・TTM・会社予想も併せて確認しています。
+      判定材料が食い違う場合は単一のラベルに集約せず、「回復初期」「転換点の可能性」
+      「判定保留」として、持続性が未確認であることを明示します。
+      (参考)通期実績のみによる従来判定: {{ cyclical_type.phase }}{% if cyclical_type.detail %}({{ cyclical_type.detail }}){% endif %}。
+    </p>
+    {% endif %}
   </section>
   {% endif %}
 
   <section class="card">
-    <h2>12. 総括</h2>
+    <h2>{{ sec.sources }}. 出典・データ系統</h2>
+    <p class="note">
+      各数値の取得元と対象期間です。実績と会社予想、連結と単体、通期と四半期を
+      混在させていないことを確認できます。なお本アプリは企業公式IR・TDnetの
+      直接取得には対応しておらず、EDINET(金融庁)と株探(二次情報)を使用しています。
+    </p>
+    <table>
+      <tr><th>対象データ</th><th>出典</th><th>対象期間</th><th>実績/予想</th><th>連結/単体</th><th>単位</th><th>取得日時</th></tr>
+      {% for src in data_sources %}
+      <tr>
+        <td style="text-align:left;">{{ src["items"] }}</td>
+        <td style="text-align:left;">{{ src.source_name }}<br><span class="note">{{ src.source_url }}</span>
+          {% if src.document_date %}<br><span class="note">書類提出日: {{ src.document_date }}</span>{% endif %}</td>
+        <td>{{ src.fiscal_period }}</td>
+        <td>{{ src.actual_or_forecast }}</td>
+        <td>{{ src.consolidated }}</td>
+        <td>{{ src.unit }}</td>
+        <td>{{ src.retrieved_at }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>{{ sec.summary }}. 総括</h2>
     <div class="summary-box">{{ summary_text }}</div>
   </section>
 

@@ -23,7 +23,13 @@ GLOSSARY = {
     "ROA(総資産利益率)": "会社の全資産に対してどれだけ利益を生み出したかを示す指標。",
     "自己資本比率": "総資産のうち、返済不要の自己資本が占める割合。高いほど財務が安定しているとされる。",
     "DCF法": "将来のキャッシュフロー(お金の流れ)を現在の価値に割り引いて企業価値を見積もる評価手法。",
-    "清算価値": "会社を今すぐ清算(解散)した場合に、株主にどれだけ価値が残るかの目安。",
+    "簡易修正純資産": "資産の種類ごとに回収率(掛け目)をかけて評価し直し、負債を差し引いた金額。清算費用や退職給付の一括清算費用等は反映していないため、清算価値そのものではなく「上限側の目安」として見る。",
+    "ターミナルバリュー": "DCFで、予測期間(ここでは5年)より先の価値をまとめて評価した金額。将来のFCFが一定率で永久に成長する前提で計算し、現在価値に割り引いて使う。",
+    "WACC(加重平均資本コスト)": "会社が資金を調達するのにかかるコストの平均。DCFで将来のお金を現在価値に割り引く際の「割引率」として使う。高いほど評価額は小さくなる。",
+    "永久成長率": "予測期間より先で、FCFが毎年どれだけ成長し続けるかの前提。WACCを超えると計算が発散するため、WACC以上の値は設定できない。",
+    "当座資産": "流動資産のうち、現金・預金、売上債権、短期保有の有価証券など、すぐ現金化できるもの。棚卸資産や投資有価証券は含めない。",
+    "固定長期適合率": "固定資産が、自己資本と固定負債(長期の資金)でどれだけ賄えているかを示す指標。100%以下なら長期資金の範囲で設備投資ができている。",
+    "ネットデット": "有利子負債が手元資金を上回っている状態(ネットキャッシュのマイナス)。",
     "フリーキャッシュフロー(FCF)": "本業で稼いだお金から、設備投資などに使ったお金を差し引いた、自由に使えるお金。",
     "ネットキャッシュ": "現金・預金や有価証券などすぐに使えるお金から、借金(有利子負債)を差し引いた金額。",
     "グレアムの公式": "PER×PBRが22.5以下であれば割安、という株式投資の古典的な目安。",
@@ -129,9 +135,144 @@ def _enrich_manual_data_with_edinet(code: str, manual: dict, latest_period: str 
         "submit_date": detail.get("_edinet_submit_date"),
         "filled_fields": filled_fields,
     }
-    manual["_segments"] = detail.get("_segments")
-    manual["_major_shareholders"] = detail.get("_major_shareholders")
+    for key in ("_segments", "_major_shareholders", "_risk_events",
+                "_interest_bearing_debt_breakdown", "_capital_history",
+                "_goodwill_inferred_zero", "_securities_inferred_zero"):
+        manual[key] = detail.get(key)
     return manual
+
+
+def _shares_for_per_share_value(manual: dict) -> float | None:
+    """1株あたり価値の算出に使う株式数(発行済株式数 − 自己株式数)。"""
+    issued = manual.get("shares_issued")
+    if issued is None:
+        return None
+    treasury = manual.get("treasury_shares") or 0
+    return issued - treasury
+
+
+def _build_price_basis(company_data, merged: dict, latest_period: str | None) -> dict:
+    """
+    PER・PBRがどの時点・どの数値を使った指標かを明示する。
+
+    株探が掲載するPERは会社予想EPSを用いた「予想PER」、PBRは直近実績の
+    BPSを用いた「実績PBR」であり、異なる時点の数値を混ぜないよう
+    それぞれの基準を分けて表示する。
+    """
+    forecast = next((r for r in company_data.annual_performance if r.get("is_forecast")), None)
+    forecast_eps = forecast.get("eps") if forecast else None
+    forecast_period = forecast.get("period") if forecast else None
+
+    latest = merged.get(latest_period, {}) if latest_period else {}
+    bps = latest.get("bps")
+
+    # 株価 ÷ 予想EPS が掲載PERと一致するかを確認し、根拠が確認できた場合のみ
+    # 「予想PER」と明示する(確認できない場合は基準不明として扱う)。
+    per_label = "PER(基準確認不能)"
+    per_basis = "使用EPSを特定できませんでした"
+    if company_data.price and forecast_eps and company_data.per:
+        implied = company_data.price / forecast_eps
+        if abs(implied - company_data.per) / company_data.per <= 0.05:
+            per_label = "予想PER"
+            per_basis = f"会社予想EPS {forecast_eps:.2f}円({forecast_period}期)／株価 {company_data.price:.0f}円"
+
+    pbr_label = "PBR(基準確認不能)"
+    pbr_basis = "使用BPSを特定できませんでした"
+    if company_data.price and bps and company_data.pbr:
+        implied = company_data.price / bps
+        if abs(implied - company_data.pbr) / company_data.pbr <= 0.10:
+            pbr_label = "実績PBR"
+            pbr_basis = f"実績BPS {bps:.2f}円({latest_period}期)／株価 {company_data.price:.0f}円"
+
+    return {
+        "per_label": per_label,
+        "per_basis": per_basis,
+        "forecast_eps": forecast_eps,
+        "forecast_period": forecast_period,
+        "pbr_label": pbr_label,
+        "pbr_basis": pbr_basis,
+        "bps": bps,
+        "bps_period": latest_period,
+        "price_as_of": "株探の個別銘柄ページ取得時点の株価",
+    }
+
+
+def _build_data_sources(code: str, company_data, latest_period: str | None, manual: dict) -> list[dict]:
+    """
+    どの数値をどこから取得したかの一覧(出典・対象期間・実績/予想の別)。
+    実績と予想、連結と単体を混在させていないことを確認できるようにする。
+    """
+    retrieved_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    sources = [
+        {
+            "items": "株価・時価総額・PER・PBR・配当利回り",
+            "source_name": "株探(kabutan.jp) 個別銘柄ページ",
+            "source_url": f"https://kabutan.jp/stock/?code={code}",
+            "fiscal_period": "取得時点の株価/会社予想ベース",
+            "actual_or_forecast": "株価=時価、PER=会社予想ベース",
+            "consolidated": "連結",
+            "unit": "円 / 億円",
+            "retrieved_at": retrieved_at,
+        },
+        {
+            "items": "業績推移・四半期業績・財務・キャッシュフロー",
+            "source_name": "株探(kabutan.jp) 決算ページ",
+            "source_url": f"https://kabutan.jp/stock/finance?code={code}",
+            "fiscal_period": f"直近実績 {latest_period} 期",
+            "actual_or_forecast": "実績(会社予想行は「(予)」と明示)",
+            "consolidated": "連結",
+            "unit": "百万円(1株益・1株配は円)",
+            "retrieved_at": retrieved_at,
+        },
+    ]
+
+    edinet_source = manual.get("_edinet_source")
+    if edinet_source:
+        doc_id = edinet_source.get("doc_id")
+        sources.append(
+            {
+                "items": "貸借対照表内訳・有利子負債・減価償却費・特別損益・株式数・セグメント・大株主",
+                "source_name": "EDINET(金融庁) 有価証券報告書",
+                "source_url": f"https://disclosure2.edinet-fsa.go.jp/WZEK0040.aspx?S100={doc_id}" if doc_id else "https://disclosure2.edinet-fsa.go.jp/",
+                "document_date": edinet_source.get("submit_date"),
+                "fiscal_period": f"{latest_period} 期",
+                "actual_or_forecast": "実績",
+                "consolidated": "連結(NonConsolidatedMemberの単体値は除外)",
+                "unit": "百万円",
+                "retrieved_at": retrieved_at,
+            }
+        )
+    return sources
+
+
+def _build_section_numbers(flags: dict) -> dict:
+    """
+    条件分岐で非表示になるセクションがあっても見出し番号が連番になるよう、
+    表示するセクションだけに通し番号を振る。
+    """
+    order = [
+        ("basic", True),
+        ("business", True),
+        ("annual", True),
+        ("quarterly", flags.get("quarterly")),
+        ("segments", flags.get("segments")),
+        ("financials", True),
+        ("indicators", True),
+        ("shareholders", flags.get("shareholders")),
+        ("risk_events", flags.get("risk_events")),
+        ("valuation", True),
+        ("breakeven", flags.get("breakeven")),
+        ("grades", True),
+        ("sources", True),
+        ("summary", True),
+    ]
+    numbers = {}
+    n = 0
+    for key, visible in order:
+        if visible:
+            n += 1
+            numbers[key] = n
+    return numbers
 
 
 def generate_report(code: str) -> Path:
@@ -159,8 +300,8 @@ def generate_report(code: str) -> Path:
     }
 
     liquidation = valuation.compute_liquidation_value(manual)
-    dcf = valuation.compute_dcf(latest, manual, liquidation["value"])
-    cash_depletion = valuation.compute_cash_depletion_years(latest, manual)
+    dcf = valuation.compute_dcf(latest, manual, _shares_for_per_share_value(manual))
+    net_cash = valuation.compute_net_cash(latest, manual)
 
     market_cap_oku = company_data.market_cap / 1e8 if company_data.market_cap else None
     # 清算価値・DCF・PSR等は百万円単位で統一しているため、時価総額(円単位で
@@ -179,6 +320,8 @@ def generate_report(code: str) -> Path:
     )
     cyclical_type = classifier.classify_cyclical_value(company_data.sector, merged, company_data.pbr)
 
+    ordered_periods = metrics.ordered_actual_periods(merged)
+    free_cash_flow = dcf.get("base_fcf")
     grades, a_grade_items = grading.compile_grades(
         pbr=company_data.pbr,
         per=company_data.per,
@@ -191,6 +334,10 @@ def generate_report(code: str) -> Path:
         manual=manual,
         eps=latest.get("eps"),
         dps=latest.get("dps"),
+        merged=merged,
+        ordered_periods=ordered_periods,
+        dividend_yield=company_data.dividend_yield,
+        free_cash_flow=free_cash_flow,
     )
 
     summary_text = summary.build_summary(
@@ -229,13 +376,35 @@ def generate_report(code: str) -> Path:
         cash_and_deposits=manual.get("cash_and_deposits"),
         operating_income=latest.get("operating_income"),
         depreciation_amortization=manual.get("depreciation_amortization"),
+        period_label=latest_period,
+        debt_breakdown=manual.get("_interest_bearing_debt_breakdown"),
     )
     accrual_ratio = advanced_metrics.compute_accrual_ratio(
         latest.get("net_income"), latest.get("operating_cf"), latest.get("total_assets")
     )
-    fscore = advanced_metrics.compute_simplified_fscore(merged, metrics.ordered_actual_periods(merged))
+    adjusted_profit = advanced_metrics.compute_adjusted_profit(latest, manual, roic["tax_rate"])
+    fscore = advanced_metrics.compute_simplified_fscore(
+        merged, ordered_periods, manual=manual, adjusted=adjusted_profit
+    )
     breakeven = advanced_metrics.compute_breakeven_analysis(company_data.annual_performance)
     governance = advanced_metrics.compute_governance_check(major_shareholders)
+    risk_events = manual.get("_risk_events")
+    cycle_signals = classifier.build_cycle_signals(
+        merged, quarterly_analysis, company_data.annual_performance
+    )
+    cycle_summary = classifier.summarize_cycle_signals(cycle_signals)
+    price_basis = _build_price_basis(company_data, merged, latest_period)
+    data_sources = _build_data_sources(code, company_data, latest_period, manual)
+    consistency_warnings = metrics.check_ratio_consistency(health_metrics)
+    section_numbers = _build_section_numbers(
+        {
+            "quarterly": bool(quarterly_analysis),
+            "segments": bool(segments),
+            "shareholders": bool(major_shareholders),
+            "risk_events": bool(risk_events),
+            "breakeven": bool(breakeven.get("available")),
+        }
+    )
 
     charts = _build_annual_series(company_data)
     if quarterly_analysis:
@@ -271,7 +440,7 @@ def generate_report(code: str) -> Path:
         danger_flags=danger_flags,
         liquidation=liquidation,
         dcf=dcf,
-        cash_depletion=cash_depletion,
+        net_cash=net_cash,
         asset_type=asset_type,
         profit_type=profit_type,
         cyclical_type=cyclical_type,
@@ -294,8 +463,16 @@ def generate_report(code: str) -> Path:
         roic=roic,
         valuation_ratios=valuation_ratios,
         accrual_ratio=accrual_ratio,
+        adjusted_profit=adjusted_profit,
         fscore=fscore,
         breakeven=breakeven,
+        risk_events=risk_events,
+        cycle_signals=cycle_signals,
+        cycle_summary=cycle_summary,
+        price_basis=price_basis,
+        data_sources=data_sources,
+        consistency_warnings=consistency_warnings,
+        sec=section_numbers,
         grade_definitions=grading.GRADE_DEFINITIONS,
         grade_notes=grading.GRADE_NOTES,
     )

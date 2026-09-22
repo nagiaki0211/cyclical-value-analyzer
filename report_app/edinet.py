@@ -189,7 +189,16 @@ FIELD_TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
     "intangible_fixed_assets": [("jppfs_cor", "IntangibleAssets"), ("jpigp_cor", "IntangibleAssetsIFRS")],
     "investments_other": [("jppfs_cor", "InvestmentsAndOtherAssets"), ("jpigp_cor", "InvestmentsAccountedForUsingEquityMethodIFRS")],
     "cash_and_deposits": [("jppfs_cor", "CashAndDeposits"), ("jpigp_cor", "CashAndCashEquivalentsIFRS")],
-    "securities": [("jppfs_cor", "InvestmentSecurities"), ("jpigp_cor", "OtherFinancialAssetsCAIFRS")],
+    # 「有価証券」は流動資産に計上される短期保有分のみを対象とする。
+    # 固定資産側の「投資有価証券」(InvestmentSecurities)を入れると、
+    # 当座資産に固定資産が混入して当座比率が流動比率を上回るほか、
+    # 清算価値で investments_other(投資その他の資産)と二重計上になる。
+    "securities": [("jppfs_cor", "ShortTermInvestmentSecurities"), ("jpigp_cor", "OtherFinancialAssetsCAIFRS")],
+    # 投資有価証券(固定資産)。「有価証券込み修正ネットキャッシュ」の算出にのみ使う。
+    "investment_securities_noncurrent": [
+        ("jppfs_cor", "InvestmentSecurities"),
+        ("jpigp_cor", "OtherFinancialAssetsNCAIFRS"),
+    ],
     "goodwill": [("jppfs_cor", "Goodwill"), ("jpigp_cor", "GoodwillIFRS")],
 }
 
@@ -211,12 +220,41 @@ RECEIVABLES_JGAAP_SUM_TAGS = [
     "ElectronicallyRecordedMonetaryClaimsOperating",
 ]
 
+# 有利子負債の構成科目。「1年内返済予定の長期借入金」「1年内償還予定の社債」は
+# 流動負債側に別掲されるため、これを落とすと有利子負債が過小になり、
+# EV/EBITDA・ROIC・ネットキャッシュがまとめて過小評価される。
 INTEREST_BEARING_DEBT_JGAAP_SUM_TAGS = [
-    "ShortTermLoansPayable", "LongTermLoansPayable", "BondsPayable",
-    "CurrentPortionOfBonds", "ConvertibleBondsPayable",
-    "LeaseObligationsCL", "LeaseObligationsNCL", "CommercialPapers",
+    "ShortTermLoansPayable", "CurrentPortionOfLongTermLoansPayable",
+    "LongTermLoansPayable", "BondsPayable", "CurrentPortionOfBonds",
+    "ConvertibleBondsPayable", "LeaseObligationsCL", "LeaseObligationsNCL",
+    "CommercialPapers",
 ]
 INTEREST_BEARING_DEBT_IFRS_TAGS = ["InterestBearingLiabilitiesCLIFRS", "InterestBearingLiabilitiesNCLIFRS"]
+
+# レポートに「どの科目を有利子負債に含めたか」を表示するための和名。
+DEBT_TAG_LABELS = {
+    "ShortTermLoansPayable": "短期借入金",
+    "CurrentPortionOfLongTermLoansPayable": "1年内返済予定の長期借入金",
+    "LongTermLoansPayable": "長期借入金",
+    "BondsPayable": "社債",
+    "CurrentPortionOfBonds": "1年内償還予定の社債",
+    "ConvertibleBondsPayable": "転換社債",
+    "LeaseObligationsCL": "リース債務(流動)",
+    "LeaseObligationsNCL": "リース債務(固定)",
+    "CommercialPapers": "コマーシャルペーパー",
+    "InterestBearingLiabilitiesCLIFRS": "有利子負債(流動・IFRS)",
+    "InterestBearingLiabilitiesNCLIFRS": "有利子負債(固定・IFRS)",
+}
+
+
+def _debt_breakdown(facts: dict, prefix: str, tags: list[str], context: str = "CurrentYearInstant") -> list[dict]:
+    """有利子負債として合算した科目の明細(再現性のためレポートに表示する)。"""
+    rows = []
+    for tag in tags:
+        value = _get_fact(facts, prefix, tag, context)
+        if value is not None:
+            rows.append({"label": DEBT_TAG_LABELS.get(tag, tag), "tag": tag, "value": value})
+    return rows
 
 
 def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> dict:
@@ -237,9 +275,13 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     result["receivables"] = receivables
 
     debt = _sum_available(facts, "jpigp_cor", INTEREST_BEARING_DEBT_IFRS_TAGS)
-    if debt is None:
+    if debt is not None:
+        debt_rows = _debt_breakdown(facts, "jpigp_cor", INTEREST_BEARING_DEBT_IFRS_TAGS)
+    else:
         debt = _sum_available(facts, "jppfs_cor", INTEREST_BEARING_DEBT_JGAAP_SUM_TAGS)
+        debt_rows = _debt_breakdown(facts, "jppfs_cor", INTEREST_BEARING_DEBT_JGAAP_SUM_TAGS)
     result["interest_bearing_debt"] = debt
+    result["_interest_bearing_debt_breakdown"] = debt_rows
 
     # 損益計算書の項目(期間集計値)は貸借対照表と異なり、
     # contextRef が "CurrentYearDuration" になる。
@@ -276,7 +318,96 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
         context="CurrentYearDuration",
     )
 
+    # 前期の法人税等・税引前利益。単年度の実効税率は税効果や一過性損益で
+    # 大きく振れるため、複数年を合算した「正常化実効税率」の算出に使う。
+    result["income_taxes_prev_year"] = _first_available(
+        facts,
+        [("jppfs_cor", "IncomeTaxes"), ("jpigp_cor", "IncomeTaxExpenseIFRS")],
+        context="Prior1YearDuration",
+    )
+    result["income_before_taxes_prev_year"] = _first_available(
+        facts,
+        [("jppfs_cor", "IncomeBeforeIncomeTaxes"), ("jpigp_cor", "ProfitLossBeforeTaxIFRS")],
+        context="Prior1YearDuration",
+    )
+
+    # 自己株式の取得額(株主還元姿勢の判定に使う。キャッシュフロー計算書上は支出=マイナス)。
+    result["treasury_stock_purchase"] = _first_available(
+        facts,
+        [("jppfs_cor", "PurchaseOfTreasuryStockFinCF"), ("jpigp_cor", "PurchaseOfTreasuryStockFinCFIFRS")],
+        context="CurrentYearDuration",
+    )
+
+    # 特別利益・特別損失(利益の質の判定で、一過性損益を除いた調整後利益に使う)。
+    result["extraordinary_income"] = _get_fact(facts, "jppfs_cor", "ExtraordinaryIncome", context="CurrentYearDuration")
+    result["extraordinary_loss"] = _get_fact(facts, "jppfs_cor", "ExtraordinaryLoss", context="CurrentYearDuration")
+
+    # 前期の売掛金・棚卸資産(急増チェック用)。貸借対照表項目は Prior1YearInstant。
+    prev_receivables = _first_available(facts, RECEIVABLES_SINGLE_TAG_CANDIDATES, context="Prior1YearInstant")
+    if prev_receivables is None:
+        prev_receivables = _sum_available(facts, "jppfs_cor", RECEIVABLES_JGAAP_SUM_TAGS, context="Prior1YearInstant")
+    result["receivables_prev_year"] = prev_receivables
+
+    prev_inventory = _first_available(facts, INVENTORY_SINGLE_TAG_CANDIDATES, context="Prior1YearInstant")
+    if prev_inventory is None:
+        prev_inventory = _sum_available(facts, "jppfs_cor", INVENTORY_JGAAP_SUM_TAGS, context="Prior1YearInstant")
+    result["inventory_prev_year"] = prev_inventory
+
+    # 貸借対照表の取得自体に成功しているのに該当タグが無い場合は、取得失敗ではなく
+    # 「その科目の計上が無い」と判断できる(0として扱う)。のれんを計上していない
+    # 会社、短期保有の有価証券を持たない会社は珍しくない。
+    if result.get("current_assets") is not None:
+        if result.get("goodwill") is None:
+            result["goodwill"] = 0.0
+            result["_goodwill_inferred_zero"] = True
+        if result.get("securities") is None:
+            result["securities"] = 0.0
+            result["_securities_inferred_zero"] = True
+
+    result.update(_extract_share_counts(facts))
+    result["_capital_history"] = _extract_capital_history(facts)
+
     return result
+
+
+def _extract_share_counts(facts: dict) -> dict:
+    """発行済株式数・自己株式数(1株あたりDCF価値の算出に使う)。"""
+    issued = _get_fact(
+        facts, "jpcrp_cor",
+        "NumberOfIssuedSharesAsOfFiscalYearEndIssuedSharesTotalNumberOfSharesEtc",
+        context="FilingDateInstant",
+    )
+    if issued is None:
+        issued = _get_fact(
+            facts, "jpcrp_cor",
+            "NumberOfIssuedSharesAsOfFilingDateIssuedSharesTotalNumberOfSharesEtc",
+            context="FilingDateInstant",
+        )
+    treasury = _get_fact(facts, "jpcrp_cor", "TotalNumberOfSharesHeldTreasurySharesEtc", context="CurrentYearInstant")
+    return {"shares_issued": issued, "treasury_shares": treasury}
+
+
+def _extract_capital_history(facts: dict) -> list[dict]:
+    """
+    「主要な経営指標等の推移」の発行済株式総数・資本金の5期分推移。
+    増資(株式数・資本金の増加)の有無を機械的に判定するために使う。
+    """
+    share_facts = facts.get("jpcrp_cor:TotalNumberOfIssuedSharesSummaryOfBusinessResults", {})
+    capital_facts = facts.get("jpcrp_cor:CapitalStockSummaryOfBusinessResults", {})
+    if not share_facts and not capital_facts:
+        return []
+
+    # Prior4YearInstant(最も古い) → CurrentYearInstant(最新)の順に並べる。
+    order = ["Prior4YearInstant", "Prior3YearInstant", "Prior2YearInstant", "Prior1YearInstant", "CurrentYearInstant"]
+    rows = []
+    for key in order:
+        # 単体(NonConsolidatedMember)側にのみ値が入る様式が一般的。
+        shares = share_facts.get(key, share_facts.get(f"{key}_NonConsolidatedMember"))
+        capital = capital_facts.get(key, capital_facts.get(f"{key}_NonConsolidatedMember"))
+        if shares is None and capital is None:
+            continue
+        rows.append({"context": key, "shares": shares, "capital_stock": capital})
+    return rows
 
 
 _SUBTOTAL_LABELS = {"計", "合計", "小計", "報告セグメント計"}
@@ -411,6 +542,74 @@ def extract_major_shareholders(html: str) -> list[dict] | None:
     return shareholders or None
 
 
+# 定性リスクとして拾うイベントのキーワード。会社・業種を問わず使える
+# 一般的な開示語彙のみを対象とし、銘柄固有の語は含めない。
+RISK_EVENT_KEYWORDS = [
+    "撤退", "工場閉鎖", "生産終了", "減損", "評価損", "合弁解消", "解散",
+    "供給停止", "調達先の変更", "訴訟", "増資", "第三者割当", "公募増資",
+    "業績予想の修正", "配当予想の修正", "特別損失", "事業譲渡", "株式譲渡",
+    "営業譲渡", "持分譲渡", "リコール", "行政処分",
+]
+# 抽出対象とする有価証券報告書の標準セクション見出し。
+_RISK_SECTION_KEYWORDS = ("事業等のリスク", "重要な後発事象", "経営者による財政状態", "対処すべき課題")
+_MAX_RISK_EVENTS = 12
+
+
+def extract_risk_events(html: str) -> list[dict] | None:
+    """
+    有価証券報告書の定性セクションから、投資判断に影響しうるイベントの
+    記述を抜き出す(撤退・減損・合弁解消・訴訟・増資等)。
+
+    金額や時期の推定は一切行わず、開示されている文をそのまま引用する。
+    金額が本文に明記されていない場合は、呼び出し側で「金額未確定」と
+    表示する(推測値を入れない方針)。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    sections: list[tuple[str, str]] = []
+    for tag in soup.find_all(["p", "h3", "h4", "span"]):
+        text = tag.get_text(strip=True)
+        if not text or len(text) > 60:
+            continue
+        if any(kw in text for kw in _RISK_SECTION_KEYWORDS):
+            body_parts = []
+            node = tag
+            for _ in range(60):
+                node = node.find_next("p")
+                if node is None:
+                    break
+                body_parts.append(node.get_text(strip=True))
+            sections.append((text, " ".join(body_parts)))
+
+    events: list[dict] = []
+    seen: set[str] = set()
+    for section_name, body in sections:
+        for sentence in re.split(r"(?<=。)", body):
+            sentence = sentence.strip()
+            if not sentence or len(sentence) < 15 or len(sentence) > 300:
+                continue
+            matched = [kw for kw in RISK_EVENT_KEYWORDS if kw in sentence]
+            if not matched:
+                continue
+            key = sentence[:60]
+            if key in seen:
+                continue
+            seen.add(key)
+            # 文中に金額表記があればそのまま保持する(無い場合は None のまま)。
+            amount_match = re.search(r"([0-9０-９,，]+(?:百万円|億円|千円|円))", sentence)
+            events.append(
+                {
+                    "section": section_name,
+                    "keywords": matched,
+                    "text": sentence,
+                    "amount_text": amount_match.group(1) if amount_match else None,
+                }
+            )
+            if len(events) >= _MAX_RISK_EVENTS:
+                return events
+    return events or None
+
+
 def fetch_balance_sheet_detail_via_edinet(
     sec_code4: str, fiscal_year_end: date, kabutan_revenue: float | None, api_key: str
 ) -> dict | None:
@@ -436,4 +635,5 @@ def fetch_balance_sheet_detail_via_edinet(
     detail["_edinet_submit_date"] = doc["submitDate"]
     detail["_segments"] = extract_segment_info(html)
     detail["_major_shareholders"] = extract_major_shareholders(html)
+    detail["_risk_events"] = extract_risk_events(html)
     return detail

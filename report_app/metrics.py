@@ -82,6 +82,23 @@ def _safe_div(numerator, denominator, multiplier=1.0):
 _JUDGE_GE = "ge"  # 値が基準以上なら良好
 _JUDGE_LE = "le"  # 値が基準以下なら良好
 
+# 業種・企業規模によって適正水準が異なる指標が多いため、単純なOK/NGではなく
+# 段階評価にする(境界を1ポイント超えただけで「NG」と断じない)。
+# grading.py は、この段階に対応するスコアを合計してA〜Eを算出する。
+LEVEL_GOOD = "良好"
+LEVEL_NORMAL = "標準"
+LEVEL_WATCH = "要観察"
+LEVEL_CAUTION = "注意"
+LEVEL_UNKNOWN = "判定不能"
+
+LEVEL_SCORES = {
+    LEVEL_GOOD: 1.0,
+    LEVEL_NORMAL: 0.75,
+    LEVEL_WATCH: 0.4,
+    LEVEL_CAUTION: 0.0,
+    LEVEL_UNKNOWN: None,
+}
+
 
 def _judge(value: float | None, direction: str, threshold: float) -> bool | None:
     if value is None:
@@ -89,61 +106,146 @@ def _judge(value: float | None, direction: str, threshold: float) -> bool | None
     return value >= threshold if direction == _JUDGE_GE else value <= threshold
 
 
+def _level(value: float | None, direction: str, good_th: float, normal_th: float, watch_th: float) -> str:
+    """
+    3つの境界値から段階評価を決める。
+    direction が _JUDGE_GE なら「値が大きいほど良い」指標、
+    _JUDGE_LE なら「値が小さいほど良い」指標として扱う。
+    """
+    if value is None:
+        return LEVEL_UNKNOWN
+    if direction == _JUDGE_GE:
+        if value >= good_th:
+            return LEVEL_GOOD
+        if value >= normal_th:
+            return LEVEL_NORMAL
+        if value >= watch_th:
+            return LEVEL_WATCH
+        return LEVEL_CAUTION
+    if value <= good_th:
+        return LEVEL_GOOD
+    if value <= normal_th:
+        return LEVEL_NORMAL
+    if value <= watch_th:
+        return LEVEL_WATCH
+    return LEVEL_CAUTION
+
+
+def _metric(value: float | None, direction: str, good_th: float, normal_th: float,
+            watch_th: float, **extra) -> dict:
+    """指標1件分の辞書(値・段階評価・スコア・表示用の目安)を作る。"""
+    level = _level(value, direction, good_th, normal_th, watch_th)
+    return {
+        "value": value,
+        "level": level,
+        "score": LEVEL_SCORES[level],
+        # 既存の合否表示との互換用(良好・標準を満たす場合のみ True)。
+        "ok": None if level == LEVEL_UNKNOWN else level in (LEVEL_GOOD, LEVEL_NORMAL),
+        **extra,
+    }
+
+
+# 当座資産に算入する科目(いずれも流動資産に分類されるもののみ)。
+# 棚卸資産・投資有価証券・固定資産は当座資産に含めない。
+QUICK_ASSET_FIELDS = ("cash_and_deposits", "receivables", "securities")
+QUICK_ASSET_LABELS = {
+    "cash_and_deposits": "現金及び預金",
+    "receivables": "受取手形・売掛金・電子記録債権",
+    "securities": "有価証券(流動資産計上分)",
+}
+
+
+def compute_quick_assets(manual: dict) -> dict:
+    """
+    当座資産 = 現金及び預金 + 売上債権 + 有価証券(流動)。
+
+    有価証券は流動資産に計上された短期保有分のみを対象とする
+    (固定資産側の投資有価証券を含めると、当座比率が流動比率を
+    上回るという定義上ありえない結果になる)。
+    短期有価証券の開示が無い会社は 0 として扱う。
+    """
+    cash = manual.get("cash_and_deposits")
+    receivables = manual.get("receivables")
+    if cash is None or receivables is None:
+        return {"value": None, "components": []}
+
+    securities = manual.get("securities") or 0.0
+    components = [
+        {"label": QUICK_ASSET_LABELS["cash_and_deposits"], "value": cash},
+        {"label": QUICK_ASSET_LABELS["receivables"], "value": receivables},
+        {"label": QUICK_ASSET_LABELS["securities"], "value": securities},
+    ]
+    return {"value": cash + receivables + securities, "components": components}
+
+
 def compute_health_metrics(latest: dict, manual: dict) -> dict:
     """健全性指標(仕様書 6-2 ①)。"""
     current_assets = manual.get("current_assets")
     current_liabilities = manual.get("current_liabilities")
     fixed_assets = manual.get("fixed_assets")
+    fixed_liabilities = manual.get("fixed_liabilities")
     total_liabilities = manual.get("total_liabilities")
     equity = latest.get("equity")
 
-    quick_assets = None
-    if all(
-        manual.get(k) is not None
-        for k in ("cash_and_deposits", "receivables", "securities")
-    ):
-        quick_assets = (
-            manual["cash_and_deposits"] + manual["receivables"] + manual["securities"]
-        )
+    quick = compute_quick_assets(manual)
 
     equity_ratio_value = latest.get("equity_ratio")
     debt_ratio_value = _safe_div(total_liabilities, equity, 100)
     current_ratio_value = _safe_div(current_assets, current_liabilities, 100)
-    quick_ratio_value = _safe_div(quick_assets, current_liabilities, 100)
+    quick_ratio_value = _safe_div(quick["value"], current_liabilities, 100)
     fixed_ratio_value = _safe_div(fixed_assets, equity, 100)
+    fixed_long_term_value = _safe_div(
+        fixed_assets,
+        None if equity is None or fixed_liabilities is None else equity + fixed_liabilities,
+        100,
+    )
 
     return {
-        "equity_ratio": {
-            "value": equity_ratio_value,
-            "healthy": "40%以上",
-            "danger": "20%以下",
-            "ok": _judge(equity_ratio_value, _JUDGE_GE, 40),
-        },
-        "debt_ratio": {
-            "value": debt_ratio_value,
-            "healthy": "200%以下",
-            "danger": "300%以上",
-            "ok": _judge(debt_ratio_value, _JUDGE_LE, 200),
-        },
-        "current_ratio": {
-            "value": current_ratio_value,
-            "healthy": "100%以上",
-            "danger": "100%未満",
-            "ok": _judge(current_ratio_value, _JUDGE_GE, 100),
-        },
-        "quick_ratio": {
-            "value": quick_ratio_value,
-            "healthy": "100%以上",
-            "danger": None,
-            "ok": _judge(quick_ratio_value, _JUDGE_GE, 100),
-        },
-        "fixed_ratio": {
-            "value": fixed_ratio_value,
-            "healthy": "100%以下",
-            "danger": "100%超",
-            "ok": _judge(fixed_ratio_value, _JUDGE_LE, 100),
-        },
+        "equity_ratio": _metric(
+            equity_ratio_value, _JUDGE_GE, 40, 30, 20,
+            healthy="40%以上", danger="20%以下",
+        ),
+        "debt_ratio": _metric(
+            debt_ratio_value, _JUDGE_LE, 100, 200, 300,
+            healthy="200%以下", danger="300%以上",
+        ),
+        "current_ratio": _metric(
+            current_ratio_value, _JUDGE_GE, 150, 100, 80,
+            healthy="100%以上", danger="100%未満",
+        ),
+        "quick_ratio": _metric(
+            quick_ratio_value, _JUDGE_GE, 100, 80, 50,
+            healthy="100%以上", danger="50%未満",
+            components=quick["components"],
+        ),
+        # 100%を数ポイント超えただけで「注意」とはせず、120%までは要観察とする。
+        "fixed_ratio": _metric(
+            fixed_ratio_value, _JUDGE_LE, 100, 100, 120,
+            healthy="100%以下", danger="120%超",
+        ),
+        "fixed_long_term_ratio": _metric(
+            fixed_long_term_value, _JUDGE_LE, 80, 100, 110,
+            healthy="100%以下(固定資産を長期資金で賄えている)", danger="110%超",
+        ),
     }
+
+
+def check_ratio_consistency(health_metrics: dict) -> list[str]:
+    """
+    定義上ありえない大小関係が出ていないかの自己検証。
+    当座資産は流動資産の一部なので、同じ分母(流動負債)を使う限り
+    当座比率が流動比率を上回ることはない。
+    """
+    warnings = []
+    current_ratio = health_metrics.get("current_ratio", {}).get("value")
+    quick_ratio = health_metrics.get("quick_ratio", {}).get("value")
+    if current_ratio is not None and quick_ratio is not None and quick_ratio > current_ratio:
+        warnings.append(
+            f"当座比率({quick_ratio:.1f}%)が流動比率({current_ratio:.1f}%)を上回っています。"
+            "当座資産に流動資産以外の科目が混入している可能性があるため、"
+            "計算定義またはデータ分類を再確認してください。"
+        )
+    return warnings
 
 
 def compute_profitability_metrics(latest: dict, manual: dict) -> dict:
@@ -157,36 +259,25 @@ def compute_profitability_metrics(latest: dict, manual: dict) -> dict:
     roa_value = _safe_div(latest.get("net_income"), latest.get("total_assets"), 100)
 
     return {
-        "gross_margin": {
-            "value": gross_margin_value,
-            "good": "20〜40%(業界による)",
-            "ok": _judge(gross_margin_value, _JUDGE_GE, 20),
-        },
-        "operating_margin": {
-            "value": operating_margin_value,
-            "good": "5%以上=健全、10%以上=高収益",
-            "ok": _judge(operating_margin_value, _JUDGE_GE, 5),
-        },
+        "gross_margin": _metric(
+            gross_margin_value, _JUDGE_GE, 30, 20, 10, good="20〜40%(業界による)",
+        ),
+        "operating_margin": _metric(
+            operating_margin_value, _JUDGE_GE, 10, 5, 3, good="5%以上=健全、10%以上=高収益",
+        ),
         "ordinary_margin": {
             "value": ordinary_margin_value,
             "good": "営業利益率と大きく乖離しない",
-            "ok": None,  # 定量的な合否基準ではなく、定性的な比較のため判定なし
+            # 定量的な合否基準ではなく、営業利益率との比較で見る指標のため判定しない。
+            "level": LEVEL_UNKNOWN,
+            "score": None,
+            "ok": None,
         },
-        "net_margin": {
-            "value": net_margin_value,
-            "good": "5%以上=優良、3%以下=薄利経営",
-            "ok": _judge(net_margin_value, _JUDGE_GE, 5),
-        },
-        "roe": {
-            "value": roe_value,
-            "good": "10%以上=優秀、5%以下=低収益",
-            "ok": _judge(roe_value, _JUDGE_GE, 10),
-        },
-        "roa": {
-            "value": roa_value,
-            "good": "5%以上=効率的",
-            "ok": _judge(roa_value, _JUDGE_GE, 5),
-        },
+        "net_margin": _metric(
+            net_margin_value, _JUDGE_GE, 5, 3, 1, good="5%以上=優良、3%以下=薄利経営",
+        ),
+        "roe": _metric(roe_value, _JUDGE_GE, 10, 5, 3, good="10%以上=優秀、5%以下=低収益"),
+        "roa": _metric(roa_value, _JUDGE_GE, 5, 3, 1, good="5%以上=効率的"),
     }
 
 
@@ -216,31 +307,86 @@ def compute_growth_metrics(merged: dict[str, dict], manual: dict) -> dict:
     asset_turnover_value = _safe_div(curr.get("revenue"), curr.get("total_assets"))
 
     return {
-        "revenue_growth": {
-            "value": revenue_growth_value,
-            "good": "10%以上=成長企業",
-            "ok": _judge(revenue_growth_value, _JUDGE_GE, 10),
-        },
-        "operating_income_growth": {
-            "value": operating_income_growth_value,
-            "good": "プラス成長が望ましい",
-            "ok": _judge(operating_income_growth_value, _JUDGE_GE, 0),
-        },
-        "net_income_growth": {
-            "value": net_income_growth_value,
-            "good": "安定成長が理想",
-            "ok": _judge(net_income_growth_value, _JUDGE_GE, 0),
-        },
-        "asset_turnover": {
-            "value": asset_turnover_value,
-            "good": "1.0回以上が理想(業界による)",
-            "ok": _judge(asset_turnover_value, _JUDGE_GE, 1.0),
-        },
+        "revenue_growth": _metric(
+            revenue_growth_value, _JUDGE_GE, 10, 3, 0, good="10%以上=成長企業",
+        ),
+        "operating_income_growth": _metric(
+            operating_income_growth_value, _JUDGE_GE, 10, 0, -10, good="プラス成長が望ましい",
+        ),
+        "net_income_growth": _metric(
+            net_income_growth_value, _JUDGE_GE, 10, 0, -10, good="安定成長が理想",
+        ),
+        "asset_turnover": _metric(
+            asset_turnover_value, _JUDGE_GE, 1.0, 0.8, 0.5, good="1.0回以上が理想(業界による)",
+        ),
         "receivables_turnover": {
             "value": _safe_div(curr.get("revenue"), manual.get("receivables")),
             "good": "回数が多いほど資金繰り良好",
-            "ok": None,  # 絶対的な合否基準が無いため判定なし
+            # 業種差が大きく絶対的な基準が無いため判定しない。
+            "level": LEVEL_UNKNOWN,
+            "score": None,
+            "ok": None,
         },
+    }
+
+
+def _missing_reason(fields: dict) -> str:
+    """判定不可の理由(どの科目が取得できなかったか)を明示する。"""
+    missing = [name for name, value in fields.items() if value is None]
+    if not missing:
+        return ""
+    return "取得不能: " + "、".join(missing)
+
+
+# 発行済株式数がこの割合を超えて増えた年があれば、増資(または株式分割等)が
+# あったとみなす。分割との区別は自動ではできないため、レポート上は
+# 「株式数の増加を検出」という事実のみ示す。
+SHARE_INCREASE_THRESHOLD = 0.02
+
+
+def _capital_increase_flag(manual: dict) -> dict:
+    """
+    増資履歴。手入力メモがあればそれを優先し、無ければEDINETの
+    「主要な経営指標等の推移」の発行済株式総数・資本金の推移から判定する。
+    """
+    notes = manual.get("capital_increase_notes")
+    if notes:
+        return {
+            "label": "頻繁な増資(特に第三者割当増資)の履歴がある",
+            "triggered": True,
+            "note": notes,
+        }
+
+    history = manual.get("_capital_history") or []
+    usable = [row for row in history if row.get("shares") is not None]
+    if len(usable) < 2:
+        return {
+            "label": "頻繁な増資(特に第三者割当増資)の履歴がある",
+            "triggered": None,
+            "note": _missing_reason({"発行済株式総数の推移(有価証券報告書)": None}),
+        }
+
+    increases = []
+    for prev, curr in zip(usable, usable[1:]):
+        if prev["shares"] and curr["shares"]:
+            change = (curr["shares"] - prev["shares"]) / prev["shares"]
+            if change > SHARE_INCREASE_THRESHOLD:
+                increases.append(change)
+
+    if increases:
+        return {
+            "label": "頻繁な増資(特に第三者割当増資)の履歴がある",
+            "triggered": True,
+            "note": (
+                f"直近{len(usable)}期で発行済株式数の増加を{len(increases)}回検出"
+                "(最大 {:+.1%})。増資か株式分割かは自動判別できないため、"
+                "有価証券報告書で内容を確認してください".format(max(increases))
+            ),
+        }
+    return {
+        "label": "頻繁な増資(特に第三者割当増資)の履歴がある",
+        "triggered": False,
+        "note": f"直近{len(usable)}期で発行済株式数の目立った増加なし",
     }
 
 
@@ -315,6 +461,13 @@ def compute_danger_flags(merged: dict[str, dict], manual: dict) -> list[dict]:
                 if inventory_growth_ratio is None or revenue_growth_ratio is None
                 else inventory_growth_ratio > revenue_growth_ratio
             ),
+            "note": (
+                f"棚卸資産 {inventory_growth_ratio:+.1%} / 売上高 {revenue_growth_ratio:+.1%}"
+                if inventory_growth_ratio is not None and revenue_growth_ratio is not None
+                else _missing_reason(
+                    {"当期棚卸資産": inv, "前期棚卸資産": inv_prev, "売上高成長率": revenue_growth_ratio}
+                )
+            ),
         }
     )
 
@@ -324,19 +477,24 @@ def compute_danger_flags(merged: dict[str, dict], manual: dict) -> list[dict]:
         {
             "label": "売掛金が前年から急激に増加(目安: 前年比30%超、粉飾懸念)",
             "triggered": None if receivables_growth_ratio is None else receivables_growth_ratio > 0.3,
+            "note": (
+                f"売上債権 {receivables_growth_ratio:+.1%}"
+                if receivables_growth_ratio is not None
+                else _missing_reason({"当期売上債権": rec, "前期売上債権": rec_prev})
+            ),
         }
     )
 
-    notes = manual.get("capital_increase_notes")
-    flags.append(
-        {
-            "label": "頻繁な増資(特に第三者割当増資)の履歴がある",
-            "triggered": None if not notes else True,
-            "note": notes,
-        }
-    )
+    flags.append(_capital_increase_flag(manual))
 
     goodwill = manual.get("goodwill")
+    goodwill_note = ""
+    if goodwill is None or equity is None or equity == 0:
+        goodwill_note = _missing_reason({"のれん": goodwill, "自己資本": equity or None})
+    elif manual.get("_goodwill_inferred_zero"):
+        goodwill_note = "貸借対照表に「のれん」の計上なし"
+    else:
+        goodwill_note = f"のれん÷自己資本 = {goodwill / equity:.1%}"
     flags.append(
         {
             "label": "「のれん」が自己資本に対して過大(目安: 自己資本比率を60%超圧迫)",
@@ -345,6 +503,7 @@ def compute_danger_flags(merged: dict[str, dict], manual: dict) -> list[dict]:
                 if goodwill is None or equity is None or equity == 0
                 else goodwill / equity > 0.6
             ),
+            "note": goodwill_note,
         }
     )
 

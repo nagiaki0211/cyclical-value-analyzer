@@ -26,7 +26,8 @@ TEMPLATE = {
     "as_of": None,
     # 貸借対照表の内訳(清算価値・流動比率・当座比率・固定比率の計算に使用)
     "cash_and_deposits": None,
-    "securities": None,
+    "securities": None,  # 有価証券(流動資産計上分のみ。投資有価証券は含めない)
+    "investment_securities_noncurrent": None,  # 投資有価証券(固定資産。修正ネットキャッシュ用)
     "receivables": None,
     "inventory": None,
     "other_current_assets": None,
@@ -45,6 +46,15 @@ TEMPLATE = {
     "depreciation_amortization": None,  # 減価償却費(EV/EBITDA計算用)
     "income_taxes": None,  # 法人税等(ROIC用の実効税率算出に使用)
     "income_before_taxes": None,  # 税引前当期純利益(同上)
+    "income_taxes_prev_year": None,  # 前期の法人税等(正常化実効税率の算出に使用)
+    "income_before_taxes_prev_year": None,  # 前期の税引前当期純利益(同上)
+    "extraordinary_income": None,  # 特別利益(調整後利益の算出に使用)
+    "extraordinary_loss": None,  # 特別損失(同上)
+    "effective_tax_rate": None,  # ROIC用の実効税率を明示指定する場合(例: 0.3062)
+    # 株式数・株主還元(1株あたりDCF価値、株主重視姿勢の判定に使用)
+    "shares_issued": None,  # 発行済株式数(株)
+    "treasury_shares": None,  # 自己株式数(株)
+    "treasury_stock_purchase": None,  # 自己株式の取得額(百万円。CF上は支出=マイナス)
     # 危険信号フラグ判定の補助情報
     "capital_increase_notes": None,  # 増資履歴に関するメモ(第三者割当増資の有無等)
     "receivables_prev_year": None,  # 前年の売掛金(急増チェック用)

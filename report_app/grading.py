@@ -32,9 +32,11 @@ GRADE_DEFINITIONS = [
 GRADE_NOTES = (
     "項目1・2(資産/収益力から見た割安性)はPBR・PER・DCF等の複数指標を"
     "0〜2点でスコア化し、その合計割合で判定します。項目3〜5(財務健全性・"
-    "収益性・成長性)は、該当する各指標が基準を満たすかどうかの割合で判定します。"
-    "項目6(株主重視姿勢)は配当性向が20〜50%の範囲であればA、それ以外の配当ありはC、"
-    "無配はEとする簡易ルールで判定します。なお原典にある「事業素質」は定性判断が"
+    "収益性・成長性)は、各指標の段階評価(良好=1.0/標準=0.75/要観察=0.4/注意=0)を"
+    "平均した割合で判定します(境界を僅かに超えただけで不合格とはしません)。"
+    "項目6(株主重視姿勢)は、配当性向・連続配当年数・減配/無配履歴・配当利回り・"
+    "自社株買い・FCFに対する配当負担を確認し、判定できた項目が4件未満の場合は"
+    "高評価を出さず「評価保留(情報不足)」とします。なお原典にある「事業素質」は定性判断が"
     "中心で数値評価になじまないため、この評価からは除外し、"
     "「2. 事業内容」セクションの自動要約で代替しています。"
 )
@@ -56,14 +58,21 @@ def grade_from_ratio(ratio: float | None) -> str | None:
 
 def _grade_from_metric_group(metrics: dict) -> dict:
     """
-    metrics 内の各指標が持つ "ok" (True/False/判定不可はNone、
-    metrics.py で算出済み)を集計してA〜Eを決める。
-    基準値そのものは metrics.py 側に一元化している。
+    metrics 内の各指標の段階評価スコア(良好=1.0/標準=0.75/要観察=0.4/
+    注意=0.0、判定不能はNone)を平均してA〜Eを決める。
+
+    境界値を僅かに超えただけの指標を「不合格」として切り捨てず、
+    段階評価をそのまま評価に反映させる。基準値は metrics.py に一元化。
     """
-    evaluated = sum(1 for m in metrics.values() if m.get("ok") is not None)
+    scores = [m.get("score") for m in metrics.values() if m.get("score") is not None]
+    ratio = sum(scores) / len(scores) if scores else None
     passed = sum(1 for m in metrics.values() if m.get("ok") is True)
-    ratio = passed / evaluated if evaluated else None
-    return {"grade": grade_from_ratio(ratio), "passed": passed, "evaluated": evaluated}
+    return {
+        "grade": grade_from_ratio(ratio),
+        "passed": passed,
+        "evaluated": len(scores),
+        "score_ratio": ratio,
+    }
 
 
 def grade_asset_value(pbr: float | None, market_cap: float | None, liquidation_value: float | None) -> dict:
@@ -105,37 +114,122 @@ def grade_growth(growth_metrics: dict) -> dict:
     return _grade_from_metric_group(growth_metrics)
 
 
-def grade_shareholder_return(eps: float | None, dps: float | None, manual: dict) -> dict:
-    """項目6: 株主重視姿勢(配当性向は自動計算、自社株買い実績は定性メモ)。"""
+def grade_shareholder_return(eps: float | None, dps: float | None, manual: dict,
+                              merged: dict | None = None, ordered_periods: list[str] | None = None,
+                              dividend_yield: float | None = None,
+                              free_cash_flow: float | None = None) -> dict:
+    """
+    項目6: 株主重視姿勢。
+
+    配当性向が適正レンジというだけでA評価にはしない。配当の継続性
+    (連続配当年数・減配/無配履歴)、配当利回り、自社株買い、FCFに対する
+    配当負担も併せて確認し、判定材料が足りない場合はAではなく
+    「評価保留(情報不足)」とする。
+    """
     payout_ratio = None
     if eps is not None and dps is not None and eps > 0:
         payout_ratio = dps / eps * 100
 
-    grade = None
-    if payout_ratio is not None:
-        if 20 <= payout_ratio <= 50:
-            grade = "A"
-        elif payout_ratio > 0:
-            grade = "C"
+    dps_history = []
+    if merged and ordered_periods:
+        dps_history = [
+            {"period": p, "dps": merged[p].get("dps")}
+            for p in ordered_periods
+            if merged[p].get("dps") is not None
+        ]
+
+    consecutive_years = 0
+    for record in reversed(dps_history):
+        if record["dps"] and record["dps"] > 0:
+            consecutive_years += 1
         else:
-            grade = "E"
+            break
+
+    has_cut = None
+    has_zero = None
+    if len(dps_history) >= 2:
+        has_cut = any(
+            curr["dps"] < prev["dps"]
+            for prev, curr in zip(dps_history, dps_history[1:])
+        )
+        has_zero = any(record["dps"] == 0 for record in dps_history)
+
+    total_dividend = None
+    dividend_burden = None
+    shares = manual.get("shares_issued")
+    if dps is not None and shares:
+        # 配当総額(百万円) = 1株配当(円) × 発行済株式数 ÷ 1,000,000
+        total_dividend = dps * shares / 1e6
+        if free_cash_flow and free_cash_flow > 0:
+            dividend_burden = total_dividend / free_cash_flow * 100
+
+    buyback = manual.get("treasury_stock_purchase")
+    notes = manual.get("shareholder_return_notes")
+
+    checks = [
+        {"label": "配当性向が20〜50%の適正レンジ", "passed": (
+            None if payout_ratio is None else 20 <= payout_ratio <= 50)},
+        {"label": "3期以上連続で配当を実施", "passed": (
+            None if not dps_history else consecutive_years >= 3)},
+        {"label": "直近の開示期間に減配なし", "passed": None if has_cut is None else not has_cut},
+        {"label": "直近の開示期間に無配なし", "passed": None if has_zero is None else not has_zero},
+        {"label": "配当利回りが2%以上", "passed": (
+            None if dividend_yield is None else dividend_yield >= 2.0)},
+        {"label": "配当負担がFCFの50%以内", "passed": (
+            None if dividend_burden is None else dividend_burden <= 50)},
+        {"label": "自社株買いの実施", "passed": (
+            None if buyback is None else abs(buyback) > 0)},
+    ]
+
+    evaluated = [c for c in checks if c["passed"] is not None]
+    passed = sum(1 for c in evaluated if c["passed"])
+
+    # 判定材料が半分未満しか揃っていない場合は、高評価を出さず保留する。
+    if len(evaluated) < 4:
+        return {
+            "grade": None,
+            "grade_label": "評価保留(情報不足)",
+            "payout_ratio": payout_ratio,
+            "checks": checks,
+            "consecutive_years": consecutive_years,
+            "dividend_burden": dividend_burden,
+            "notes": notes or f"判定材料が不足しています(判定できた項目: {len(evaluated)}/{len(checks)})",
+        }
 
     return {
-        "grade": grade,
+        "grade": grade_from_ratio(passed / len(evaluated)),
+        "grade_label": None,
         "payout_ratio": payout_ratio,
-        "notes": manual.get("shareholder_return_notes") or "情報未入力(manual_data ファイルに追記してください)",
+        "checks": checks,
+        "passed": passed,
+        "evaluated": len(evaluated),
+        "consecutive_years": consecutive_years,
+        "total_dividend": total_dividend,
+        "dividend_burden": dividend_burden,
+        "buyback": buyback,
+        "notes": notes,
     }
 
 
 def compile_grades(*, pbr, per, market_cap, liquidation_value, dcf, health_metrics,
-                    profitability_metrics, growth_metrics, manual, eps, dps) -> list[dict]:
+                    profitability_metrics, growth_metrics, manual, eps, dps,
+                    merged=None, ordered_periods=None, dividend_yield=None,
+                    free_cash_flow=None) -> list[dict]:
     items = [
         {"no": 1, "label": "資産から見た割安性", **grade_asset_value(pbr, market_cap, liquidation_value)},
         {"no": 2, "label": "収益力から見た割安性", **grade_earnings_value(per, market_cap, dcf)},
         {"no": 3, "label": "財務健全性", **grade_financial_health(health_metrics)},
         {"no": 4, "label": "収益性", **grade_profitability(profitability_metrics)},
         {"no": 5, "label": "成長性", **grade_growth(growth_metrics)},
-        {"no": 6, "label": "株主重視姿勢", **grade_shareholder_return(eps, dps, manual)},
+        {
+            "no": 6,
+            "label": "株主重視姿勢",
+            **grade_shareholder_return(
+                eps, dps, manual,
+                merged=merged, ordered_periods=ordered_periods,
+                dividend_yield=dividend_yield, free_cash_flow=free_cash_flow,
+            ),
+        },
     ]
     a_grade_items = [i["label"] for i in items if i.get("grade") == "A"]
     return items, a_grade_items

@@ -168,3 +168,131 @@ def classify_cyclical_value(sector: str, merged_periods: dict, pbr: float | None
         "detail": detail,
         "matched": is_cyclical_sector,
     }
+
+
+def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | None,
+                        annual_performance: list[dict] | None) -> list[dict]:
+    """
+    景気サイクルの判定材料を、時点の異なる4つの指標に分けて並べる。
+
+    通期実績だけで判定すると、決算期の切れ目をまたいだ足元の変化
+    (四半期での回復など)を見落とす。判定材料が食い違う場合は、
+    無理に1つのラベルへ集約せず、materials として併記する。
+    """
+    from report_app.metrics import ordered_actual_periods
+
+    signals: list[dict] = []
+    periods = ordered_actual_periods(merged_periods)
+
+    if len(periods) >= 2:
+        prev_oi = merged_periods[periods[-2]].get("ordinary_income")
+        curr_oi = merged_periods[periods[-1]].get("ordinary_income")
+        if prev_oi not in (None, 0) and curr_oi is not None:
+            change = (curr_oi - prev_oi) / abs(prev_oi)
+            signals.append(
+                {
+                    "name": "過去通期(経常利益)",
+                    "period": periods[-1],
+                    "basis": "実績",
+                    "value": change * 100,
+                    "direction": "改善" if change > 0 else ("悪化" if change < 0 else "横ばい"),
+                    "detail": f"前期比 {change:+.1%}",
+                }
+            )
+
+    if quarterly_analysis:
+        latest_q = quarterly_analysis[-1]
+        yoy_revenue = latest_q.get("yoy_revenue")
+        yoy_operating = latest_q.get("yoy_operating_income")
+        if yoy_revenue is not None or yoy_operating is not None:
+            primary = yoy_operating if yoy_operating is not None else yoy_revenue
+            details = []
+            if yoy_revenue is not None:
+                details.append(f"売上高 前年同期比 {yoy_revenue:+.1f}%")
+            if yoy_operating is not None:
+                details.append(f"営業利益 前年同期比 {yoy_operating:+.1f}%")
+            signals.append(
+                {
+                    "name": "直近四半期(前年同期比)",
+                    "period": latest_q.get("period"),
+                    "basis": "実績",
+                    "value": primary,
+                    "direction": "改善" if primary > 0 else ("悪化" if primary < 0 else "横ばい"),
+                    "detail": " ／ ".join(details),
+                }
+            )
+
+        ttm_values = [q.get("ttm_revenue") for q in quarterly_analysis if q.get("ttm_revenue") is not None]
+        if len(ttm_values) >= 2:
+            change = (ttm_values[-1] - ttm_values[-2]) / abs(ttm_values[-2]) if ttm_values[-2] else None
+            if change is not None:
+                signals.append(
+                    {
+                        "name": "TTM(直近12か月累計売上高)",
+                        "period": quarterly_analysis[-1].get("period"),
+                        "basis": "実績",
+                        "value": change * 100,
+                        "direction": "改善" if change > 0 else ("悪化" if change < 0 else "横ばい"),
+                        "detail": f"前四半期のTTM比 {change:+.1%}",
+                    }
+                )
+
+    forecast = next((r for r in (annual_performance or []) if r.get("is_forecast")), None)
+    if forecast and periods:
+        latest_actual = merged_periods[periods[-1]]
+        prev_oi = latest_actual.get("operating_income")
+        forecast_oi = forecast.get("operating_income")
+        if prev_oi not in (None, 0) and forecast_oi is not None:
+            change = (forecast_oi - prev_oi) / abs(prev_oi)
+            signals.append(
+                {
+                    "name": "会社予想(営業利益)",
+                    "period": forecast.get("period"),
+                    "basis": "会社予想",
+                    "value": change * 100,
+                    "direction": "増益" if change > 0 else ("減益" if change < 0 else "横ばい"),
+                    "detail": f"直近実績比 {change:+.1%}",
+                }
+            )
+
+    return signals
+
+
+def summarize_cycle_signals(signals: list[dict]) -> dict:
+    """
+    複数の判定材料から総合判断を作る。材料が矛盾する場合は
+    「回復初期」「転換点の可能性」「判定保留」として、断定を避ける。
+    """
+    if not signals:
+        return {"label": "判定保留(材料不足)", "detail": "判定に使えるデータが取得できませんでした"}
+
+    positive_words = ("改善", "増益")
+    past = [s for s in signals if s["name"].startswith("過去通期")]
+    recent = [s for s in signals if s["name"].startswith(("直近四半期", "TTM"))]
+    forecast = [s for s in signals if s["basis"] == "会社予想"]
+
+    past_positive = bool(past) and all(s["direction"] in positive_words for s in past)
+    recent_positive = bool(recent) and any(s["direction"] in positive_words for s in recent)
+    recent_negative = bool(recent) and all(s["direction"] not in positive_words for s in recent)
+    forecast_positive = bool(forecast) and all(s["direction"] in positive_words for s in forecast)
+
+    if past_positive and recent_positive:
+        label = "②好況期〜拡大局面の可能性"
+        detail = "通期・直近ともに改善方向"
+    elif not past_positive and recent_positive and forecast_positive:
+        label = "①回復初期の可能性(持続性は未確認)"
+        detail = "通期実績は悪化しているが、直近四半期と会社予想は改善方向。転換点の可能性がある"
+    elif not past_positive and recent_positive:
+        label = "転換点の可能性(判定保留)"
+        detail = "通期実績と直近の方向感が食い違っており、回復の持続性は確認できない"
+    elif past_positive and recent_negative:
+        label = "③後退期入りの可能性"
+        detail = "通期は改善だが、直近四半期は悪化方向"
+    elif recent_negative:
+        label = "③後退期の可能性"
+        detail = "通期・直近ともに悪化方向"
+    else:
+        label = "判定保留"
+        detail = "判定材料が揃っていないか、方向感が定まっていません"
+
+    return {"label": label, "detail": detail}

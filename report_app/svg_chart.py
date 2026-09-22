@@ -36,7 +36,7 @@ def bar_chart_svg(labels: list[str], series: list[tuple[str, list[float | None]]
         f'<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" '
         f'style="width:100%;max-width:{width}px;height:auto;font-family:sans-serif;font-size:11px;">'
     ]
-    parts.append(f'<line x1="{padding_left}" y1="{zero_y}" x2="{width}" y2="{zero_y}" stroke="#999" />')
+    parts.append(f'<line x1="{padding_left}" y1="{zero_y}" x2="{width}" y2="{zero_y}" stroke="var(--chart-axis)" />')
 
     for gi, label in enumerate(labels):
         gx = padding_left + gi * group_w
@@ -53,14 +53,14 @@ def bar_chart_svg(labels: list[str], series: list[tuple[str, list[float | None]]
             )
         parts.append(
             f'<text x="{gx + group_w / 2:.1f}" y="{height - padding_bottom + 15}" '
-            f'text-anchor="middle" fill="#333">{label}</text>'
+            f'text-anchor="middle" fill="var(--chart-text)">{label}</text>'
         )
 
     legend_x = padding_left
     for si, (name, _) in enumerate(series):
         color = colors[si % len(colors)]
         parts.append(f'<rect x="{legend_x}" y="2" width="10" height="10" fill="{color}" />')
-        parts.append(f'<text x="{legend_x + 14}" y="11" fill="#333">{name}</text>')
+        parts.append(f'<text x="{legend_x + 14}" y="11" fill="var(--chart-text)">{name}</text>')
         legend_x += 14 + len(name) * 9 + 12
 
     parts.append("</svg>")
