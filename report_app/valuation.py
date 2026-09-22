@@ -16,6 +16,7 @@ ASSET_HAIRCUTS = {
     "cash_and_deposits": 1.00,
     "securities": 1.00,
     "receivables": 0.85,
+    "electronically_recorded_receivables": 0.85,
     "inventory": 0.50,
     "other_current_assets": 0.00,
     "tangible_fixed_assets": 0.50,
@@ -27,6 +28,7 @@ ASSET_LABELS = {
     "cash_and_deposits": "現金及び預金",
     "securities": "有価証券(流動)",
     "receivables": "売上債権",
+    "electronically_recorded_receivables": "電子記録債権",
     "inventory": "棚卸資産",
     "other_current_assets": "その他流動資産",
     "tangible_fixed_assets": "有形固定資産",
@@ -61,6 +63,11 @@ def compute_liquidation_value(manual: dict) -> dict:
     ここでの金額は清算価値の「上限側の目安」であり、レポート上も
     「簡易修正純資産」として表示する。
     """
+    manual = dict(manual)
+    # 電子記録債権の科目自体がない会社ではゼロ。売上債権から分離して
+    # 開示される会社では0.85の同じ掛け目で評価する。
+    if manual.get("electronically_recorded_receivables") is None:
+        manual["electronically_recorded_receivables"] = 0.0
     missing = [k for k in ASSET_HAIRCUTS if manual.get(k) is None]
     total_liabilities = manual.get("total_liabilities")
 
@@ -202,15 +209,26 @@ def _resolve_base_fcf(latest: dict, manual: dict, tax_rate: float) -> dict:
     depreciation = manual.get("depreciation_amortization")
     capex_tangible = manual.get("capital_expenditure_tangible")
     capex_intangible = manual.get("capital_expenditure_intangible")
+    capex_total_reported = manual.get("capital_expenditure_total")
     working_capital = manual.get("increase_in_working_capital")
     operating_cf = latest.get("operating_cf")
 
     capex_tangible = abs(capex_tangible) if capex_tangible is not None else None
     capex_intangible = abs(capex_intangible) if capex_intangible is not None else None
-    total_capex = (
-        capex_tangible + capex_intangible
-        if capex_tangible is not None and capex_intangible is not None else None
-    )
+    capex_total_reported = abs(capex_total_reported) if capex_total_reported is not None else None
+    inferred_zero_fields = []
+    if capex_total_reported is not None:
+        total_capex = capex_total_reported
+    elif capex_tangible is not None or capex_intangible is not None:
+        if capex_tangible is None:
+            capex_tangible = 0.0
+            inferred_zero_fields.append("有形固定資産取得")
+        if capex_intangible is None:
+            capex_intangible = 0.0
+            inferred_zero_fields.append("無形固定資産取得")
+        total_capex = capex_tangible + capex_intangible
+    else:
+        total_capex = None
     if all(v is not None for v in (operating_income, depreciation, total_capex, working_capital)):
         nopat = operating_income * (1 - tax_rate)
         return {
@@ -218,20 +236,30 @@ def _resolve_base_fcf(latest: dict, manual: dict, tax_rate: float) -> dict:
             "kind": "FCFF", "definition": FCFF_DEFINITION, "is_strict_fcff": True,
             "components": {"nopat": nopat, "depreciation": depreciation,
                            "capex_tangible": capex_tangible, "capex_intangible": capex_intangible,
+                           "capex_total": total_capex, "capex_total_reported": capex_total_reported,
+                           "inferred_zero_fields": inferred_zero_fields,
                            "increase_in_working_capital": working_capital, "operating_cf": operating_cf},
         }
     if operating_cf is not None and total_capex is not None:
+        simple_definition = (
+            "簡易FCF = 営業CF - 設備投資"
+            if capex_total_reported is not None else SIMPLE_FCF_DEFINITION
+        )
         return {
             "value": operating_cf - total_capex,
-            "kind": "簡易FCF", "definition": SIMPLE_FCF_DEFINITION, "is_strict_fcff": False,
+            "kind": "簡易FCF", "definition": simple_definition, "is_strict_fcff": False,
             "components": {"nopat": None, "depreciation": depreciation,
                            "capex_tangible": capex_tangible, "capex_intangible": capex_intangible,
+                           "capex_total": total_capex, "capex_total_reported": capex_total_reported,
+                           "inferred_zero_fields": inferred_zero_fields,
                            "increase_in_working_capital": None, "operating_cf": operating_cf},
         }
     return {
         "value": None, "kind": None, "definition": SIMPLE_FCF_DEFINITION,
         "is_strict_fcff": False, "components": {"operating_cf": operating_cf,
-        "capex_tangible": capex_tangible, "capex_intangible": capex_intangible},
+        "capex_tangible": capex_tangible, "capex_intangible": capex_intangible,
+        "capex_total": total_capex, "capex_total_reported": capex_total_reported,
+        "inferred_zero_fields": inferred_zero_fields},
     }
 
 
@@ -258,6 +286,11 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
     warnings: list[str] = []
     if not fcf["is_strict_fcff"] and base_fcf is not None:
         warnings.append("設備投資控除後の簡易FCFであり、厳密なFCFFではありません")
+    if fcf["components"].get("inferred_zero_fields"):
+        warnings.append(
+            "取得タグがない設備投資内訳を0として扱いました: "
+            + "、".join(fcf["components"]["inferred_zero_fields"])
+        )
     if wacc["kind"] == "シナリオ仮定":
         warnings.append("WACC構成要素が不足しているため、割引率は計算値ではなくシナリオ仮定です")
 

@@ -91,6 +91,7 @@ class CompanyData:
     name_en: str = ""
     sector: str = ""
     business_summary: str = ""
+    corporate_url: str | None = None
     price: float | None = None
     market_cap: float | None = None
     per: float | None = None
@@ -154,6 +155,19 @@ def _parse_basic_info(soup: BeautifulSoup, data: CompanyData) -> None:
         data.business_summary = pairs.get("概要", "")
         data.sector = pairs.get("業種", "")
         data.name_en = pairs.get("英語社名", "")
+
+    # 株探の会社概要欄に掲載される企業公式サイト。銘柄固有URLをコードへ
+    # ハードコードせず、公式IRページ探索の起点として使う。
+    official_link = next(
+        (
+            a for a in soup.find_all("a", href=True)
+            if a["href"].startswith(("https://", "http://"))
+            and a.get_text(strip=True).rstrip("/") == a["href"].rstrip("/")
+        ),
+        None,
+    )
+    if official_link:
+        data.corporate_url = official_link["href"]
 
 
 def _parse_table_after_heading(soup: BeautifulSoup, heading_text: str) -> list[list[str]]:

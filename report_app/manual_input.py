@@ -47,6 +47,7 @@ TEMPLATE = {
     "depreciation_amortization": None,  # 減価償却費(EV/EBITDA計算用)
     "capital_expenditure_tangible": None,  # 有形固定資産取得支出(正の金額)
     "capital_expenditure_intangible": None,  # 無形固定資産取得支出(正の金額)
+    "capital_expenditure_total": None,  # IFRS等で設備投資を合算開示する場合
     "increase_in_working_capital": None,  # 運転資本増加額(増加は正、減少は負)
     "income_taxes": None,  # 法人税等(ROIC用の実効税率算出に使用)
     "income_before_taxes": None,  # 税引前当期純利益(同上)

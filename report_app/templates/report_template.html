@@ -471,12 +471,12 @@
   <section class="card">
     <h2>{{ sec.risk_events }}. 定性リスク・重要イベント</h2>
     <p class="note">
-      出典: EDINETおよび企業公式IR。損益計算書・CF計算書・注記・特別損益明細と照合し、
+      出典: EDINET、企業公式IRまたはTDnet。損益計算書・CF計算書・注記・特別損益明細と照合し、
       対応金額を確認できなかった項目のみ「金額未確定」と表示します。
       網羅性を保証するものではないため、重要な判断の前には原文をご確認ください。
     </p>
     {% if ir_status.confirmed %}
-    <p class="note" style="color:var(--good);">最新IR確認日: <strong>{{ ir_status.latest_date }}</strong>
+    <p class="note" style="color:var(--good);">最新IR・TDnet確認日: <strong>{{ ir_status.latest_date }}</strong>
       (取得日時: {{ ir_status.retrieved_at }})</p>
     {% else %}
     <p class="note" style="color:var(--bad);">⚠ 最新IR・TDnet未確認</p>
@@ -558,11 +558,21 @@
       <tr><td>FCFの定義</td><td>{{ dcf.fcf_definition }}<br>
         {% if dcf.fcf_kind == "FCFF" %}
         NOPAT {{ "{:,.0f}".format(dcf.fcf_components.nopat) }} ＋ 減価償却費 {{ "{:,.0f}".format(dcf.fcf_components.depreciation) }}
+        {% if dcf.fcf_components.capex_total_reported is not none %}
+        − 設備投資(合算開示) {{ "{:,.0f}".format(dcf.fcf_components.capex_total) }}
+        {% else %}
         − 有形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_tangible) }} − 無形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_intangible) }}
+        {% endif %}
         − 運転資本増加額 {{ "{:,.0f}".format(dcf.fcf_components.increase_in_working_capital) }}
         {% else %}
-        営業CF {{ "{:,.0f}".format(dcf.fcf_components.operating_cf) }} − 有形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_tangible) }}
-        − 無形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_intangible) }}。<strong>厳密なFCFFではありません。</strong>
+        営業CF {{ "{:,.0f}".format(dcf.fcf_components.operating_cf) }}
+        {% if dcf.fcf_components.capex_total_reported is not none %}
+        − 設備投資(合算開示) {{ "{:,.0f}".format(dcf.fcf_components.capex_total) }}。
+        {% else %}
+        − 有形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_tangible) }}
+        − 無形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_intangible) }}。
+        {% endif %}
+        <strong>厳密なFCFFではありません。</strong>
         {% endif %}
       </td></tr>
       <tr><td>予測年数</td><td>{{ dcf.forecast_years }} 年(6年目以降はターミナルバリューで評価)</td></tr>

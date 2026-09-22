@@ -250,7 +250,7 @@ def _build_data_sources(code: str, company_data, latest_period: str | None, manu
     if ir_status and ir_status.get("confirmed"):
         sources.append({
             "items": "最新の適時開示・定性リスク",
-            "source_name": "企業公式IR",
+            "source_name": ir_status.get("source_name", "企業公式IR / TDnet"),
             "source_url": ir_status.get("source_url"),
             "document_date": ir_status.get("latest_date"),
             "fiscal_period": "最新開示",
@@ -322,7 +322,9 @@ def generate_report(code: str) -> Path:
     manual = _enrich_manual_data_with_edinet(code, manual, latest_period, latest)
     if manual.get("equity_market_value") is None and company_data.market_cap is not None:
         manual["equity_market_value"] = company_data.market_cap / 1e6
-    ir_status = ir_disclosures.fetch_latest_ir_disclosures(code, manual.get("official_ir_url"))
+    ir_status = ir_disclosures.fetch_latest_ir_disclosures(
+        code, manual.get("official_ir_url"), company_data.corporate_url,
+    )
     manual["_ir_status"] = ir_status
 
     health_metrics = metrics.compute_health_metrics(latest, manual)
@@ -423,7 +425,8 @@ def generate_report(code: str) -> Path:
     risk_events = list(manual.get("_risk_events") or [])
     if manual.get("factory_closure_loss") is not None:
         for event in risk_events:
-            if any(k in event.get("text", "") for k in ("工場閉鎖", "堺工場", "同工場を閉鎖")) and not event.get("amount_text"):
+            text = event.get("text", "")
+            if ("工場閉鎖" in text or ("工場" in text and "閉鎖" in text)) and not event.get("amount_text"):
                 event["amount_text"] = f"{manual['factory_closure_loss']:,.0f}百万円"
                 event["amount_basis"] = "特別損失明細「工場閉鎖損失」と照合"
     risk_events.extend(ir_status.get("risk_events") or [])

@@ -338,6 +338,12 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
          ("jpigp_cor", "PurchaseOfIntangibleAssetsInvCFIFRS")],
         context="CurrentYearDuration",
     )
+    result["capital_expenditure_total"] = _first_available(
+        facts,
+        [("jpigp_cor", "CapitalExpendituresIFRS"),
+         ("jppfs_cor", "CapitalExpenditures")],
+        context="CurrentYearDuration",
+    )
     result["income_taxes"] = _first_available(
         facts,
         [("jppfs_cor", "IncomeTaxes"), ("jpigp_cor", "IncomeTaxExpenseIFRS")],
@@ -643,7 +649,6 @@ def extract_risk_events(html: str) -> list[dict] | None:
             if len(events) >= _MAX_RISK_EVENTS:
                 return events
     # 本文側に金額がなくても、特別損益明細に対応科目がある場合は関連付ける。
-    # 例: 堺工場閉鎖の説明と、明細上の「工場閉鎖損失 504百万円」。
     full_text = " ".join(soup.get_text(" ", strip=True).split())
     closure_amount = re.search(
         r"工場閉鎖損失[^0-9０-９]{0,80}([0-9０-９,，]+)\s*(百万円|億円|千円|円)",
@@ -652,9 +657,9 @@ def extract_risk_events(html: str) -> list[dict] | None:
     if closure_amount:
         amount_text = closure_amount.group(1) + closure_amount.group(2)
         for event in events:
-            if not event.get("amount_text") and any(
-                keyword in event.get("text", "") for keyword in ("工場閉鎖", "堺工場")
-            ):
+            text = event.get("text", "")
+            is_factory_event = "工場閉鎖" in text or ("工場" in text and "閉鎖" in text)
+            if not event.get("amount_text") and is_factory_event:
                 event["amount_text"] = amount_text
                 event["amount_basis"] = "特別損失明細「工場閉鎖損失」と照合"
     return events or None

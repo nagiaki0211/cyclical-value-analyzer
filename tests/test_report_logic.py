@@ -14,9 +14,11 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
+from bs4 import BeautifulSoup
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from report_app import advanced_metrics, classifier, edinet, grading, ir_disclosures, metrics, summary, valuation
+from report_app import advanced_metrics, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation
 from report_app.report_generator import _build_price_basis, _build_section_numbers, _check_source_dates
 from report_app.scraper import _parse_market_cap
 
@@ -160,6 +162,29 @@ class TestDcf(unittest.TestCase):
         self.assertAlmostEqual(large_sale_proceeds["base_fcf"], 1236.0)
         self.assertEqual(large_sale_proceeds["fcf_kind"], "簡易FCF")
         self.assertTrue(any("厳密なFCFFではありません" in w for w in large_sale_proceeds["warnings"]))
+
+    def test_missing_intangible_capex_is_zero_when_tangible_is_disclosed(self):
+        """4228型: 設備投資の片方だけが開示されてもDCF全体を落とさない。"""
+        manual = sample_manual(
+            capital_expenditure_tangible=-4215.0,
+            capital_expenditure_intangible=None,
+        )
+        result = valuation.compute_dcf(sample_latest(operating_cf=7000.0), manual, None)
+        self.assertTrue(result["available"])
+        self.assertAlmostEqual(result["base_fcf"], 2785.0)
+        self.assertEqual(result["fcf_components"]["capex_intangible"], 0.0)
+
+    def test_ifrs_total_capex_supports_dcf(self):
+        """7203型: CapitalExpendituresIFRSの合算値を使用する。"""
+        manual = sample_manual(
+            capital_expenditure_tangible=None,
+            capital_expenditure_intangible=None,
+            capital_expenditure_total=6059779.0,
+        )
+        result = valuation.compute_dcf(sample_latest(operating_cf=9000000.0), manual, None)
+        self.assertTrue(result["available"])
+        self.assertAlmostEqual(result["base_fcf"], 2940221.0)
+        self.assertEqual(result["fcf_components"]["capex_total_reported"], 6059779.0)
 
     def test_strict_fcff_formula(self):
         manual = sample_manual(increase_in_working_capital=100.0, effective_tax_rate=0.30)
@@ -542,6 +567,16 @@ class TestLiquidationValue(unittest.TestCase):
     def test_rows_sum_to_adjusted_assets(self):
         result = valuation.compute_liquidation_value(sample_manual(securities=0.0))
         self.assertAlmostEqual(sum(r["value"] for r in result["rows"]), result["adjusted_assets"])
+
+    def test_electronic_receivables_are_included_with_receivables_haircut(self):
+        result = valuation.compute_liquidation_value(sample_manual(securities=0.0))
+        row = next(r for r in result["rows"] if r["label"] == "電子記録債権")
+        self.assertEqual(row["book_value"], 1164.0)
+        self.assertEqual(row["rate"], 0.85)
+        without = valuation.compute_liquidation_value(
+            sample_manual(securities=0.0, electronically_recorded_receivables=0.0)
+        )
+        self.assertAlmostEqual(result["value"] - without["value"], 1164.0 * 0.85)
         self.assertAlmostEqual(
             result["value"], result["adjusted_assets"] - result["total_liabilities"]
         )
@@ -598,6 +633,22 @@ class TestInterestBearingDebtTags(unittest.TestCase):
         }
         detail = edinet.extract_balance_sheet_detail(facts, None)
         self.assertEqual(detail["factory_closure_loss"], 504.0)
+
+    def test_ifrs_capital_expenditures_tag_is_resolved(self):
+        facts = {"jpigp_cor:CapitalExpendituresIFRS": {"CurrentYearDuration": 6059779.0}}
+        detail = edinet.extract_balance_sheet_detail(facts, None)
+        self.assertEqual(detail["capital_expenditure_total"], 6059779.0)
+
+
+class TestGenericCompanyDiscovery(unittest.TestCase):
+    def test_corporate_url_is_parsed_without_ticker_mapping(self):
+        soup = BeautifulSoup(
+            '<h2>4228積水化成品工業</h2><a href="https://www.example.co.jp/">https://www.example.co.jp/</a>',
+            "html.parser",
+        )
+        company = scraper.CompanyData(code="4228")
+        scraper._parse_basic_info(soup, company)
+        self.assertEqual(company.corporate_url, "https://www.example.co.jp/")
 
 
 class TestDisclosureAndCycleConsistency(unittest.TestCase):
