@@ -97,7 +97,10 @@ def grade_earnings_value(per: float | None, market_cap: float | None, dcf: dict)
     bear, bull = dcf.get("bear_case"), dcf.get("bull_case")
     if market_cap is not None and bear is not None and bull is not None:
         max_score += 2
-        score += 2 if market_cap < bear else (1 if market_cap < bull else 0)
+        # 書籍の弱気・強気は別々の計算方法のため、会社によっては弱気の方が
+        # 大きくなる。どちらが上でも判定が壊れないよう、低い方・高い方で比較する。
+        low, high = min(bear, bull), max(bear, bull)
+        score += 2 if market_cap < low else (1 if market_cap < high else 0)
     ratio = score / max_score if max_score else None
     return {"grade": grade_from_ratio(ratio), "score": score, "max_score": max_score}
 

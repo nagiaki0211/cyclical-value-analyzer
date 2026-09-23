@@ -342,6 +342,9 @@ def generate_report(code: str) -> Path:
     }
 
     liquidation = valuation.compute_liquidation_value(manual)
+    # 書籍の方式。投資判断(項目2)にはこちらを使う。
+    dcf_taachan = valuation.compute_dcf_taachan(latest, manual, liquidation["value"])
+    # WACC・ターミナルバリューを使う一般的なモデル。アプリ独自の参考値。
     dcf = valuation.compute_dcf(latest, manual, _shares_for_per_share_value(manual))
     net_cash = valuation.compute_net_cash(latest, manual)
 
@@ -371,7 +374,8 @@ def generate_report(code: str) -> Path:
         per=company_data.per,
         market_cap=market_cap_million,
         liquidation_value=liquidation["value"],
-        dcf=dcf,
+        # 項目2の評価は書籍の方式で行う(一般的なDCFは参考値扱いのため使わない)。
+        dcf=dcf_taachan,
         health_metrics=health_metrics,
         profitability_metrics=profitability_metrics,
         growth_metrics=growth_metrics,
@@ -492,6 +496,7 @@ def generate_report(code: str) -> Path:
         danger_flags=danger_flags,
         liquidation=liquidation,
         dcf=dcf,
+        dcf_taachan=dcf_taachan,
         net_cash=net_cash,
         asset_type=asset_type,
         profit_type=profit_type,

@@ -503,12 +503,14 @@
         <div class="label">簡易修正純資産</div>
         <div class="value">{% if liquidation.value is not none %}{{ "{:,.0f}".format(liquidation.value) }} 百万円{% else %}<span class="missing">確認不能</span>{% endif %}</div>
       </div>
-      {% for sc in dcf.scenarios %}
       <div class="kpi">
-        <div class="label">DCF{{ sc.label }}(株主価値)</div>
-        <div class="value">{% if sc.equity_value is not none %}{{ "{:,.0f}".format(sc.equity_value) }} 百万円{% else %}<span class="missing">N/A</span>{% endif %}</div>
+        <div class="label">たーちゃん式DCF 弱気</div>
+        <div class="value">{% if dcf_taachan.bear_case is not none %}{{ "{:,.0f}".format(dcf_taachan.bear_case) }} 百万円{% else %}<span class="missing">N/A</span>{% endif %}</div>
       </div>
-      {% endfor %}
+      <div class="kpi">
+        <div class="label">たーちゃん式DCF 強気</div>
+        <div class="value">{% if dcf_taachan.bull_case is not none %}{{ "{:,.0f}".format(dcf_taachan.bull_case) }} 百万円{% else %}<span class="missing">N/A</span>{% endif %}</div>
+      </div>
       <div class="kpi">
         <div class="label">{{ net_cash.label or "ネットキャッシュ" }}</div>
         <div class="value">
@@ -545,7 +547,72 @@
     <p class="note"><span class="missing">確認不能</span>(現金及び預金・有利子負債のデータが取得できませんでした)</p>
     {% endif %}
 
-    <h3>DCF法による株主価値</h3>
+    <h3>たーちゃん式DCF(書籍の方式)</h3>
+    <p class="note">
+      書籍に記載された計算式をそのまま用いた評価です。投資判断(項目2「収益力から見た割安性」)には
+      この値を使用しています。
+    </p>
+    <table>
+      <tr><th>シナリオ</th><th>計算式</th><th>企業価値</th></tr>
+      <tr>
+        <td>{{ dcf_taachan.bear_label }}</td>
+        <td style="text-align:left;">
+          ネットキャッシュ ＋ 今後{{ dcf_taachan.years }}年間のFCFの現在価値<br>
+          <span class="note">
+            {% if dcf_taachan.net_cash is not none %}ネットキャッシュ {{ "{:,.0f}".format(dcf_taachan.net_cash) }}{% else %}ネットキャッシュ N/A{% endif %}
+            ＋ {% if dcf_taachan.fcf is not none %}FCF {{ "{:,.0f}".format(dcf_taachan.fcf) }}{% else %}FCF N/A{% endif %}
+            × {{ "%.2f"|format(dcf_taachan.bear_factor) }}(割引率{{ "%.0f"|format(dcf_taachan.discount_rate * 100) }}%・利益成長なし)
+          </span>
+        </td>
+        <td style="font-weight:bold;">
+          {% if dcf_taachan.bear_case is not none %}{{ "{:,.0f}".format(dcf_taachan.bear_case) }}
+          {% else %}<span class="missing">{{ dcf_taachan.bear_reason }}</span>{% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>{{ dcf_taachan.bull_label }}</td>
+        <td style="text-align:left;">
+          清算価値 ＋ Σ[1〜{{ dcf_taachan.years }}年目の経常利益 × {{ dcf_taachan.profit_factor }} × (1.2/1.1)ⁿ]<br>
+          <span class="note">
+            {% if dcf_taachan.liquidation_value is not none %}清算価値 {{ "{:,.0f}".format(dcf_taachan.liquidation_value) }}{% else %}清算価値 N/A{% endif %}
+            ＋ {% if dcf_taachan.ordinary_income is not none %}経常利益 {{ "{:,.0f}".format(dcf_taachan.ordinary_income) }}{% else %}経常利益 N/A{% endif %}
+            × {{ "%.2f"|format(dcf_taachan.bull_factor) }}(年{{ "%.0f"|format(dcf_taachan.profit_growth * 100) }}%成長・割引率{{ "%.0f"|format(dcf_taachan.discount_rate * 100) }}%)
+          </span>
+        </td>
+        <td style="font-weight:bold;">
+          {% if dcf_taachan.bull_case is not none %}{{ "{:,.0f}".format(dcf_taachan.bull_case) }}
+          {% else %}<span class="missing">{{ dcf_taachan.bull_reason }}</span>{% endif %}
+        </td>
+      </tr>
+      {% if dcf_taachan.bear_perpetual is not none %}
+      <tr>
+        <td class="note">(参考)弱気・書籍の式どおり</td>
+        <td class="note" style="text-align:left;">
+          ネットキャッシュ ＋ FCF ÷ {{ "%.0f"|format(dcf_taachan.discount_rate * 100) }}%(永久に続く前提＝10倍)
+        </td>
+        <td class="note">{{ "{:,.0f}".format(dcf_taachan.bear_perpetual) }}</td>
+      </tr>
+      {% endif %}
+    </table>
+    <p class="note">
+      FCFの定義: {{ dcf_taachan.fcf_definition }}。
+      <strong>弱気シナリオは書籍では「FCF ÷ 10%」(永久に続く前提)と記載されていますが、</strong>
+      強気シナリオが5年間の合計であるため、そのままでは評価期間が揃わず、
+      弱気の方が大きくなる現象が起きます(FCFに10倍、経常利益に約3.9倍を掛けることになるため)。
+      比較できるようにするため、本アプリでは<strong>弱気も同じ{{ dcf_taachan.years }}年間で算出</strong>し、
+      書籍どおりの永久還元値は参考行として併記しています。
+      「弱気/強気」は利益成長率の前提(0% / 年20%)を指す名称で、金額の大小を意味するものではありません。
+    </p>
+    {% for w in dcf_taachan.warnings %}
+    <p class="note" style="color:var(--warn);">⚠ {{ w }}</p>
+    {% endfor %}
+
+    <h3>標準的DCF(参考・アプリ独自の補足モデル)</h3>
+    <p class="note">
+      以下は書籍の方式ではなく、WACC(加重平均資本コスト)とターミナルバリューを使う
+      一般的な財務理論のDCFモデルです。成長率・WACC・永久成長率の各パラメータは
+      書籍に記載が無く、本アプリが補ったものです。投資判断の評価には使用していません。
+    </p>
     {% if not dcf.available %}
     <p class="note" style="color:var(--warn);">⚠ {{ dcf.reason }}</p>
     {% if dcf.base_fcf is not none %}

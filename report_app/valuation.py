@@ -381,6 +381,115 @@ def _build_sensitivity(base_fcf: float, cash: float, debt: float) -> dict:
     return {"waccs": SENSITIVITY_WACCS, "terminal_growths": SENSITIVITY_TERMINAL_GROWTHS, "rows": rows}
 
 
+# ─────────────────────────────────────────────────────────────
+# たーちゃん式(書籍の方式)の企業価値評価
+# ─────────────────────────────────────────────────────────────
+# 書籍に明記されている前提値。アプリ側で補った値ではない。
+TAACHAN_DISCOUNT_RATE = 0.10        # ※書籍記載: R = 10%
+TAACHAN_PROFIT_GROWTH = 0.20        # ※書籍記載: 強気シナリオの利益成長率 年20%
+TAACHAN_PROFIT_FACTOR = 0.60        # ※書籍記載: 経常利益に掛ける係数 0.6
+TAACHAN_YEARS = 5                   # ※書籍記載: 今後5年間
+
+TAACHAN_BEAR_LABEL = "弱気シナリオ(利益成長なし)"
+TAACHAN_BULL_LABEL = "強気シナリオ(年20%成長)"
+
+
+def compute_dcf_taachan(latest: dict, manual: dict, liquidation_value: float | None) -> dict:
+    """
+    書籍(たーちゃん式)の企業価値評価。
+
+    弱気: ネットキャッシュ + 今後5年間のFCFの現在価値
+    強気: 清算価値 + Σ[1〜5年目の経常利益 × 0.6 × (1.2/1.1)^n]
+
+    ※書籍の弱気シナリオは「FCF ÷ R」(永久還元)と記載されているが、
+      強気シナリオが5年間の合計であるため、そのままでは評価期間が
+      揃わず、弱気の方が大きくなる現象が起きる(FCFに10倍、経常利益に
+      約3.9倍を掛けることになるため)。両シナリオを比較可能にするため、
+      本アプリでは弱気も同じ5年間で打ち切って算出する。
+      書籍どおりの永久還元値も bear_perpetual として併せて返し、
+      レポートには参考値として併記する。
+    """
+    cash = manual.get("cash_and_deposits")
+    securities = manual.get("securities")
+    debt = manual.get("interest_bearing_debt")
+    ordinary_income = latest.get("ordinary_income")
+
+    fcf_info = _resolve_base_fcf(latest, manual, 0.0)
+    fcf = fcf_info["value"]
+
+    net_cash = None
+    if cash is not None and debt is not None:
+        net_cash = cash + (securities or 0.0) - debt
+
+    # 弱気: 5年間のFCFを現在価値に割り引いて合計する(成長は見込まない)。
+    bear_factor = sum(1 / (1 + TAACHAN_DISCOUNT_RATE) ** n for n in range(1, TAACHAN_YEARS + 1))
+    bear_case = bear_perpetual = None
+    bear_reason = None
+    if net_cash is None or fcf is None:
+        missing = [
+            label for label, value in (("現金及び預金", cash), ("有利子負債", debt), ("FCF", fcf))
+            if value is None
+        ]
+        bear_reason = "算出不可(不足項目: " + "、".join(missing) + ")"
+    else:
+        bear_case = net_cash + fcf * bear_factor
+        bear_perpetual = net_cash + fcf / TAACHAN_DISCOUNT_RATE
+
+    # 強気: 清算価値に、5年分の成長する経常利益の現在価値を加える。
+    bull_factor = sum(
+        TAACHAN_PROFIT_FACTOR * ((1 + TAACHAN_PROFIT_GROWTH) / (1 + TAACHAN_DISCOUNT_RATE)) ** n
+        for n in range(1, TAACHAN_YEARS + 1)
+    )
+    bull_case = None
+    bull_reason = None
+    if liquidation_value is None or ordinary_income is None:
+        missing = [
+            label for label, value in (("清算価値", liquidation_value), ("経常利益", ordinary_income))
+            if value is None
+        ]
+        bull_reason = "算出不可(不足項目: " + "、".join(missing) + ")"
+    else:
+        bull_case = liquidation_value + ordinary_income * bull_factor
+
+    warnings = []
+    if fcf is not None and fcf <= 0:
+        warnings.append(
+            "FCFがマイナスのため、弱気シナリオは本業が生む価値をマイナスとして評価しています"
+        )
+    if ordinary_income is not None and ordinary_income <= 0:
+        warnings.append(
+            "経常利益がマイナスのため、強気シナリオの利益成長分もマイナスになります"
+        )
+    if bear_case is not None and bull_case is not None and bear_case > bull_case:
+        warnings.append(
+            "弱気シナリオが強気シナリオを上回っています。FCFが経常利益に比べて"
+            "大きい会社で起こり、計算の誤りではありません"
+        )
+
+    return {
+        "available": bear_case is not None or bull_case is not None,
+        "net_cash": net_cash,
+        "fcf": fcf,
+        "fcf_definition": fcf_info["definition"],
+        "ordinary_income": ordinary_income,
+        "liquidation_value": liquidation_value,
+        "years": TAACHAN_YEARS,
+        "discount_rate": TAACHAN_DISCOUNT_RATE,
+        "profit_growth": TAACHAN_PROFIT_GROWTH,
+        "profit_factor": TAACHAN_PROFIT_FACTOR,
+        "bear_label": TAACHAN_BEAR_LABEL,
+        "bull_label": TAACHAN_BULL_LABEL,
+        "bear_factor": bear_factor,
+        "bull_factor": bull_factor,
+        "bear_case": bear_case,
+        "bear_perpetual": bear_perpetual,
+        "bear_reason": bear_reason,
+        "bull_case": bull_case,
+        "bull_reason": bull_reason,
+        "warnings": warnings,
+    }
+
+
 def compute_net_cash(latest: dict, manual: dict) -> dict:
     """
     ネットキャッシュ(手元資金 − 有利子負債)。マイナスの場合はネットデット。
