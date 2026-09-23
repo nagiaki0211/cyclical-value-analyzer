@@ -697,70 +697,73 @@ class TestTaachanDcf(unittest.TestCase):
         self.assertAlmostEqual(valuation.TAACHAN_PROFIT_FACTOR, 0.60)
         self.assertEqual(valuation.TAACHAN_YEARS, 5)
 
-    def test_bear_case_is_net_cash_plus_five_years_of_fcf(self):
-        expected_factor = sum(1 / 1.1 ** n for n in range(1, 6))
-        self.assertAlmostEqual(self.result["bear_factor"], expected_factor)
+    def test_cash_power_model_matches_the_book_formula(self):
+        expected_factor = 1 / 0.10
+        self.assertAlmostEqual(self.result["cash_power_factor"], expected_factor)
         self.assertAlmostEqual(
-            self.result["bear_case"],
+            self.result["cash_power_value"],
             self.result["net_cash"] + self.result["fcf"] * expected_factor,
         )
 
-    def test_bull_case_matches_the_book_formula(self):
+    def test_liquidation_growth_model_matches_the_book_formula(self):
         expected_factor = sum(0.6 * (1.2 / 1.1) ** n for n in range(1, 6))
-        self.assertAlmostEqual(self.result["bull_factor"], expected_factor)
+        self.assertAlmostEqual(self.result["liquidation_growth_factor"], expected_factor)
         self.assertAlmostEqual(
-            self.result["bull_case"], 6525.0 + sample_latest()["ordinary_income"] * expected_factor
+            self.result["liquidation_growth_value"],
+            6525.0 + sample_latest()["ordinary_income"] * expected_factor,
         )
 
-    def test_both_scenarios_use_the_same_horizon(self):
-        """期間が揃っていないと弱気が強気を上回る。両方5年であることを保証する。"""
-        five_year_factor = sum(1 / 1.1 ** n for n in range(1, 6))
-        self.assertAlmostEqual(self.result["bear_factor"], five_year_factor)
-        # 強気も5年分の項しか持たない(6年目以降を含めない)
-        self.assertAlmostEqual(
-            self.result["bull_factor"], sum(0.6 * (1.2 / 1.1) ** n for n in range(1, 6))
-        )
+    def test_models_have_names_that_describe_what_they_measure(self):
+        self.assertEqual(self.result["cash_power_label"], "現金力モデル")
+        self.assertEqual(self.result["liquidation_growth_label"], "清算価値＋成長モデル")
+        self.assertNotIn("bear_case", self.result)
+        self.assertNotIn("bull_case", self.result)
 
-    def test_bear_is_below_bull_for_this_company(self):
-        self.assertLess(self.result["bear_case"], self.result["bull_case"])
-
-    def test_perpetual_reference_value_is_kept(self):
-        """書籍どおりの永久還元値も参考として残す。"""
-        self.assertAlmostEqual(
-            self.result["bear_perpetual"], self.result["net_cash"] + self.result["fcf"] / 0.10
-        )
-        self.assertGreater(self.result["bear_perpetual"], self.result["bear_case"])
+    def test_fcff_uses_resolved_tax_rate_instead_of_zero(self):
+        manual = sample_manual(increase_in_working_capital=100.0, effective_tax_rate=0.30)
+        result = valuation.compute_dcf_taachan(sample_latest(), manual, 6525.0)
+        expected_fcf = 576.0 * (1 - 0.30) + 755.0 - (322.0 + 85.0) - 100.0
+        self.assertAlmostEqual(result["fcf"], expected_fcf)
+        self.assertAlmostEqual(result["tax_rate"], 0.30)
 
     def test_missing_data_is_reported_not_guessed(self):
         result = valuation.compute_dcf_taachan(sample_latest(), sample_manual(), None)
-        self.assertIsNone(result["bull_case"])
-        self.assertIn("清算価値", result["bull_reason"])
-
-    def test_inversion_is_warned_not_hidden(self):
-        """弱気が強気を上回る会社では、計算ミスではない旨を警告する。"""
-        result = valuation.compute_dcf_taachan(
-            sample_latest(operating_cf=99999.0), sample_manual(), 100.0
-        )
-        self.assertGreater(result["bear_case"], result["bull_case"])
-        self.assertTrue(any("弱気シナリオが強気シナリオを上回" in w for w in result["warnings"]))
+        self.assertIsNone(result["liquidation_growth_value"])
+        self.assertIn("清算価値", result["liquidation_growth_reason"])
 
 
 class TestEarningsValueGrading(unittest.TestCase):
-    """項目2の評価が、弱気・強気の大小が逆でも壊れないこと"""
+    """項目2では、測定対象の異なる2モデルを独立に評価する。"""
 
-    def test_scores_use_low_and_high_regardless_of_order(self):
-        normal = grading.grade_earnings_value(None, 5000.0, {"bear_case": 4000.0, "bull_case": 8000.0})
-        inverted = grading.grade_earnings_value(None, 5000.0, {"bear_case": 8000.0, "bull_case": 4000.0})
-        self.assertEqual(normal["score"], inverted["score"], "大小が逆でも同じ判定になるべき")
-        self.assertEqual(normal["score"], 1)
+    def test_each_model_is_scored_independently(self):
+        result = grading.grade_earnings_value(None, 5000.0, {
+            "cash_power_value": 4000.0,
+            "liquidation_growth_value": 8000.0,
+        })
+        self.assertEqual(result["score"], 1)
+        self.assertEqual(result["max_score"], 2)
 
     def test_below_both_scores_full_marks(self):
-        result = grading.grade_earnings_value(None, 1000.0, {"bear_case": 8000.0, "bull_case": 4000.0})
+        result = grading.grade_earnings_value(None, 1000.0, {
+            "cash_power_value": 8000.0,
+            "liquidation_growth_value": 4000.0,
+        })
         self.assertEqual(result["score"], 2)
 
     def test_above_both_scores_zero(self):
-        result = grading.grade_earnings_value(None, 9000.0, {"bear_case": 8000.0, "bull_case": 4000.0})
+        result = grading.grade_earnings_value(None, 9000.0, {
+            "cash_power_value": 8000.0,
+            "liquidation_growth_value": 4000.0,
+        })
         self.assertEqual(result["score"], 0)
+
+    def test_available_model_is_used_when_the_other_is_missing(self):
+        result = grading.grade_earnings_value(None, 5000.0, {
+            "cash_power_value": 8000.0,
+            "liquidation_growth_value": None,
+        })
+        self.assertEqual(result["score"], 1)
+        self.assertEqual(result["max_score"], 1)
 
 
 if __name__ == "__main__":
