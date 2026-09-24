@@ -595,6 +595,69 @@ RISK_EVENT_KEYWORDS = [
 _RISK_SECTION_KEYWORDS = ("事業等のリスク", "重要な後発事象", "経営者による財政状態", "対処すべき課題")
 _MAX_RISK_EVENTS = 12
 
+_FULLWIDTH_NUMBER_TRANSLATION = str.maketrans("０１２３４５６７８９，", "0123456789,")
+_DISCLOSED_AMOUNT_RE = re.compile(
+    r"(?P<approx>約\s*)?(?:"
+    r"(?P<mixed_oku>[0-9][0-9,]*)\s*億\s*"
+    r"(?:(?P<mixed_sen>[0-9][0-9,]*)\s*千\s*)?"
+    r"(?:(?P<mixed_hyaku>[0-9][0-9,]*)\s*百\s*)?万円"
+    r"|(?P<million>[0-9][0-9,]*)\s*百万円"
+    r"|(?P<oku>[0-9][0-9,]*)\s*億円"
+    r"|(?P<thousand_yen>[0-9][0-9,]*)\s*千円"
+    r"|(?P<yen>[0-9][0-9,]*)\s*円"
+    r")"
+)
+
+
+def _number_from_amount_match(match: re.Match) -> float:
+    """日本語の開示金額を百万円単位へ変換する。"""
+    number = lambda name: float((match.group(name) or "0").replace(",", ""))
+    if match.group("mixed_oku") is not None:
+        # 38億8千8百万円 = 3,800 + 80 + 8 = 3,888百万円。
+        return number("mixed_oku") * 100 + number("mixed_sen") * 10 + number("mixed_hyaku")
+    if match.group("million") is not None:
+        return number("million")
+    if match.group("oku") is not None:
+        return number("oku") * 100
+    if match.group("thousand_yen") is not None:
+        return number("thousand_yen") / 1000
+    return number("yen") / 1_000_000
+
+
+def extract_disclosed_amount(
+    text: str, preferred_keywords: tuple[str, ...] = (),
+) -> str | None:
+    """
+    開示文中の金額を百万円単位に正規化する。
+
+    複数の金額がある場合は、指定キーワードの直後にある最も近い金額を
+    優先する。たとえば「売却額14億円、特別損失38億8千8百万円」では
+    「特別損失」を指定すると3,888百万円を返す。
+    """
+    normalized = text.translate(_FULLWIDTH_NUMBER_TRANSLATION)
+    matches = list(_DISCLOSED_AMOUNT_RE.finditer(normalized))
+    if not matches:
+        return None
+
+    selected = None
+    for keyword in preferred_keywords:
+        keyword_positions = [m.start() for m in re.finditer(re.escape(keyword), normalized)]
+        candidates = [
+            (amount.start() - position, amount)
+            for position in keyword_positions
+            for amount in matches
+            if 0 <= amount.start() - (position + len(keyword)) <= 160
+        ]
+        if candidates:
+            selected = min(candidates, key=lambda row: row[0])[1]
+            break
+    selected = selected or matches[0]
+
+    value = _number_from_amount_match(selected)
+    value_text = f"{value:,.3f}".rstrip("0").rstrip(".")
+    approximate = "約" if selected.group("approx") else ""
+    return f"{approximate}{value_text}百万円"
+
 
 def extract_risk_events(html: str) -> list[dict] | None:
     """
@@ -636,14 +699,18 @@ def extract_risk_events(html: str) -> list[dict] | None:
             if key in seen:
                 continue
             seen.add(key)
-            # 文中に金額表記があればそのまま保持する(無い場合は None のまま)。
-            amount_match = re.search(r"([0-9０-９,，]+(?:百万円|億円|千円|円))", sentence)
+            # 損失等のキーワード直後を優先し、漢数字単位混じりの金額も
+            # 百万円へ正規化する(無い場合は None のまま)。
+            amount_text = extract_disclosed_amount(
+                sentence,
+                ("特別損失", "工場閉鎖損失", "減損損失", "評価損", "減損"),
+            )
             events.append(
                 {
                     "section": section_name,
                     "keywords": matched,
                     "text": sentence,
-                    "amount_text": amount_match.group(1) if amount_match else None,
+                    "amount_text": amount_text,
                 }
             )
             if len(events) >= _MAX_RISK_EVENTS:

@@ -9,11 +9,10 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
-from report_app.edinet import RISK_EVENT_KEYWORDS
+from report_app.edinet import RISK_EVENT_KEYWORDS, extract_disclosed_amount
 
 
 _DATE_RE = re.compile(r"(20\d{2})[./年-](\d{1,2})[./月-](\d{1,2})日?")
-_AMOUNT_RE = re.compile(r"(?:約\s*)?[0-9０-９,，]+\s*(?:百万円|億円|千円|円)")
 
 
 def _parse_date(text: str) -> date | None:
@@ -163,15 +162,18 @@ def _risk_event(item: dict, text: str, source_name: str = "企業公式IR") -> d
             snippets.append(normalized[max(0, position - 140):position + len(keyword) + 220])
     detail = " … ".join(dict.fromkeys(snippets)) or item["title"]
     has_loss_amount = "特別損失" in title_matched or "評価損" in title_matched
-    consolidated = (
-        re.search(r"連結(?:決算)?[^。]{0,80}?((?:約\s*)?[0-9０-９,，]+\s*(?:百万円|億円))", normalized)
-        if has_loss_amount else None
-    )
-    amount = consolidated or (_AMOUNT_RE.search(detail) if has_loss_amount else None)
-    amount_text = amount.group(1) if consolidated else (amount.group(0) if amount else None)
+    amount_text = None
+    if has_loss_amount:
+        # 個別・連結が併記される場合は連結値を優先する。それ以外は
+        # 「特別損失」等の直後の金額を選び、百万円単位へ正規化する。
+        if "連結" in normalized:
+            amount_text = extract_disclosed_amount(normalized, ("連結",))
+        amount_text = amount_text or extract_disclosed_amount(
+            detail, ("特別損失", "工場閉鎖損失", "減損損失", "評価損", "減損")
+        )
     return {
         "section": source_name, "keywords": matched, "text": detail[:1800],
-        "amount_text": amount_text.replace(" ", "") if amount_text else None,
+        "amount_text": amount_text,
         "date": item["date"], "url": item["url"],
     }
 
