@@ -206,14 +206,18 @@
     {{ charts.quarterly_chart|safe }}
     <table>
       <tr>
-        <th>四半期</th><th>売上高</th><th>前年同期比</th><th>前期比</th>
+        <th>決算期・四半期</th><th>売上高</th><th>前年同期比</th><th>前期比</th>
         <th>営業利益</th><th>前年同期比</th>
         <th>純利益</th><th>前年同期比</th>
         <th>売上高TTM</th>
       </tr>
       {% for r in quarterly_analysis %}
       <tr>
-        <td>{{ r.period }}</td>
+        <td>
+          <strong>{{ r.fiscal_quarter_label }}</strong><br>
+          <span class="note">対象: {{ r.period_detail }}</span>
+          {% if r.announced_on %}<br><span class="note">発表: {{ r.announced_on }}</span>{% endif %}
+        </td>
         <td>{{ "{:,.0f}".format(r.revenue) if r.revenue is not none else "―" }}</td>
         <td>{% if r.yoy_revenue is not none %}{{ "%+.1f"|format(r.yoy_revenue) }}%{% else %}―{% endif %}</td>
         <td>{% if r.qoq_revenue is not none %}{{ "%+.1f"|format(r.qoq_revenue) }}%{% else %}―{% endif %}</td>
@@ -228,6 +232,7 @@
     <p class="note">
       前年同期比(YoY) = 4四半期前(1年前の同じ時期)との比較。前期比(QoQ) = 直前の四半期との比較。
       TTM(直近12か月累計) = 直近4四半期の合計(算出には4四半期分のデータが必要)。出典: 株探(kabutan.jp)。
+      「YYYY.MM期 nQ」はその決算期の第n四半期を表し、対象期間と発表日をその下に表示しています。
     </p>
   </section>
   {% endif %}

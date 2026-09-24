@@ -368,6 +368,41 @@ class TestQuarterlyAnalysis(unittest.TestCase):
                 expected = (self.quarters[i]["revenue"] - prev) / prev * 100
                 self.assertAlmostEqual(row["qoq_revenue"], expected)
 
+    def test_march_year_end_labels_all_quarters(self):
+        quarters = [
+            {"period": period, "revenue": 100.0, "operating_income": 10.0, "net_income": 5.0}
+            for period in ("25.04-06", "25.07-09", "25.10-12", "26.01-03")
+        ]
+        result = metrics.compute_quarterly_analysis(quarters, 3)
+        self.assertEqual(
+            [row["fiscal_quarter_label"] for row in result],
+            ["2026.03期 1Q", "2026.03期 2Q", "2026.03期 3Q", "2026.03期 4Q"],
+        )
+
+    def test_non_march_year_end_is_supported(self):
+        quarters = [
+            {"period": period, "revenue": 100.0, "operating_income": 10.0, "net_income": 5.0}
+            for period in ("25.01-03", "25.04-06", "25.07-09", "25.10-12")
+        ]
+        result = metrics.compute_quarterly_analysis(quarters, 12)
+        self.assertEqual(
+            [row["fiscal_quarter_label"] for row in result],
+            ["2025.12期 1Q", "2025.12期 2Q", "2025.12期 3Q", "2025.12期 4Q"],
+        )
+
+    def test_announcement_date_is_preserved_by_scraper(self):
+        soup = BeautifulSoup(
+            """
+            <h2>第１四半期累計決算【実績】</h2><h3>業績推移</h3>
+            <table><tr><td>26.04-06</td><td>9392</td><td>1021</td><td>1085</td>
+            <td>1027</td><td>28.45</td><td>10.9%</td><td>26/08/07</td></tr></table>
+            """,
+            "html.parser",
+        )
+        company = scraper.CompanyData(code="4406")
+        scraper._parse_quarterly_performance(soup, company)
+        self.assertEqual(company.quarterly_performance[0]["announced_on"], "2026-08-07")
+
 
 class TestUnitConversion(unittest.TestCase):
     """11. 百万円・億円・円の単位換算が正しい"""
