@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import calendar
 import datetime
+import re
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
@@ -64,7 +65,7 @@ QUARTERLY_ADVICE = (
 
 
 def _build_quarterly_series(quarterly_analysis: list[dict]) -> str:
-    labels = [r["period"] for r in quarterly_analysis]
+    labels = [r.get("fiscal_quarter_short", r["period"]) for r in quarterly_analysis]
     return bar_chart_svg(
         labels,
         [
@@ -388,7 +389,14 @@ def generate_report(code: str) -> Path:
         free_cash_flow=free_cash_flow,
     )
 
-    quarterly_analysis = metrics.compute_quarterly_analysis(company_data.quarterly_performance)
+    fiscal_year_end_month = None
+    if latest_period:
+        period_match = re.fullmatch(r"\d{4}\.(\d{2})", latest_period)
+        if period_match:
+            fiscal_year_end_month = int(period_match.group(1))
+    quarterly_analysis = metrics.compute_quarterly_analysis(
+        company_data.quarterly_performance, fiscal_year_end_month,
+    )
     segments = manual.get("_segments")
     segments_total = None
     if segments:

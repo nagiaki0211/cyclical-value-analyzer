@@ -368,6 +368,41 @@ class TestQuarterlyAnalysis(unittest.TestCase):
                 expected = (self.quarters[i]["revenue"] - prev) / prev * 100
                 self.assertAlmostEqual(row["qoq_revenue"], expected)
 
+    def test_march_year_end_labels_all_quarters(self):
+        quarters = [
+            {"period": period, "revenue": 100.0, "operating_income": 10.0, "net_income": 5.0}
+            for period in ("25.04-06", "25.07-09", "25.10-12", "26.01-03")
+        ]
+        result = metrics.compute_quarterly_analysis(quarters, 3)
+        self.assertEqual(
+            [row["fiscal_quarter_label"] for row in result],
+            ["2026.03期 1Q", "2026.03期 2Q", "2026.03期 3Q", "2026.03期 4Q"],
+        )
+
+    def test_non_march_year_end_is_supported(self):
+        quarters = [
+            {"period": period, "revenue": 100.0, "operating_income": 10.0, "net_income": 5.0}
+            for period in ("25.01-03", "25.04-06", "25.07-09", "25.10-12")
+        ]
+        result = metrics.compute_quarterly_analysis(quarters, 12)
+        self.assertEqual(
+            [row["fiscal_quarter_label"] for row in result],
+            ["2025.12期 1Q", "2025.12期 2Q", "2025.12期 3Q", "2025.12期 4Q"],
+        )
+
+    def test_announcement_date_is_preserved_by_scraper(self):
+        soup = BeautifulSoup(
+            """
+            <h2>第１四半期累計決算【実績】</h2><h3>業績推移</h3>
+            <table><tr><td>26.04-06</td><td>9392</td><td>1021</td><td>1085</td>
+            <td>1027</td><td>28.45</td><td>10.9%</td><td>26/08/07</td></tr></table>
+            """,
+            "html.parser",
+        )
+        company = scraper.CompanyData(code="4406")
+        scraper._parse_quarterly_performance(soup, company)
+        self.assertEqual(company.quarterly_performance[0]["announced_on"], "2026-08-07")
+
 
 class TestUnitConversion(unittest.TestCase):
     """11. 百万円・億円・円の単位換算が正しい"""
@@ -413,6 +448,47 @@ class TestForecastLabelling(unittest.TestCase):
         bases = {s["basis"] for s in signals}
         self.assertIn("会社予想", bases)
         self.assertIn("実績", bases)
+
+    def test_quarterly_cycle_signal_uses_fiscal_quarter_label(self):
+        quarters = [
+            {
+                "period": period, "revenue": 100.0 + i * 10,
+                "operating_income": 10.0 + i, "net_income": 5.0 + i,
+                "announced_on": "2026-08-07" if i == 4 else None,
+            }
+            for i, period in enumerate(
+                ("25.04-06", "25.07-09", "25.10-12", "26.01-03", "26.04-06")
+            )
+        ]
+        analysis = metrics.compute_quarterly_analysis(quarters, 3)
+        signals = classifier.build_cycle_signals({}, analysis, None)
+        quarterly = next(s for s in signals if s["name"] == "直近四半期(前年同期比)")
+        self.assertEqual(quarterly["period"], "2027.03期 1Q")
+        self.assertEqual(quarterly["period_range"], "2026.04～2026.06")
+        self.assertEqual(quarterly["announced_on"], "2026-08-07")
+
+    def test_all_cycle_signal_periods_have_correct_ranges(self):
+        merged = {
+            "2025.03": {"is_forecast": False, "ordinary_income": 100.0, "operating_income": 100.0},
+            "2026.03": {"is_forecast": False, "ordinary_income": 90.0, "operating_income": 90.0},
+        }
+        annual = [{"period": "2027.03", "is_forecast": True, "operating_income": 120.0}]
+        quarters = [
+            {
+                "period": period, "revenue": 100.0 + i * 10,
+                "operating_income": 10.0 + i, "net_income": 5.0 + i,
+                "announced_on": "2026-08-07" if i == 4 else None,
+            }
+            for i, period in enumerate(
+                ("25.04-06", "25.07-09", "25.10-12", "26.01-03", "26.04-06")
+            )
+        ]
+        analysis = metrics.compute_quarterly_analysis(quarters, 3)
+        signals = {s["name"]: s for s in classifier.build_cycle_signals(merged, analysis, annual)}
+        self.assertEqual(signals["過去通期(経常利益)"]["period_range"], "2025.04～2026.03")
+        self.assertEqual(signals["直近四半期(前年同期比)"]["period_range"], "2026.04～2026.06")
+        self.assertEqual(signals["TTM(直近12か月累計売上高)"]["period_range"], "2025.07～2026.06")
+        self.assertEqual(signals["会社予想(営業利益)"]["period_range"], "2026.04～2027.03")
 
 
 class TestGrading(unittest.TestCase):
@@ -697,70 +773,73 @@ class TestTaachanDcf(unittest.TestCase):
         self.assertAlmostEqual(valuation.TAACHAN_PROFIT_FACTOR, 0.60)
         self.assertEqual(valuation.TAACHAN_YEARS, 5)
 
-    def test_bear_case_is_net_cash_plus_five_years_of_fcf(self):
-        expected_factor = sum(1 / 1.1 ** n for n in range(1, 6))
-        self.assertAlmostEqual(self.result["bear_factor"], expected_factor)
+    def test_cash_power_model_matches_the_book_formula(self):
+        expected_factor = 1 / 0.10
+        self.assertAlmostEqual(self.result["cash_power_factor"], expected_factor)
         self.assertAlmostEqual(
-            self.result["bear_case"],
+            self.result["cash_power_value"],
             self.result["net_cash"] + self.result["fcf"] * expected_factor,
         )
 
-    def test_bull_case_matches_the_book_formula(self):
+    def test_liquidation_growth_model_matches_the_book_formula(self):
         expected_factor = sum(0.6 * (1.2 / 1.1) ** n for n in range(1, 6))
-        self.assertAlmostEqual(self.result["bull_factor"], expected_factor)
+        self.assertAlmostEqual(self.result["liquidation_growth_factor"], expected_factor)
         self.assertAlmostEqual(
-            self.result["bull_case"], 6525.0 + sample_latest()["ordinary_income"] * expected_factor
+            self.result["liquidation_growth_value"],
+            6525.0 + sample_latest()["ordinary_income"] * expected_factor,
         )
 
-    def test_both_scenarios_use_the_same_horizon(self):
-        """期間が揃っていないと弱気が強気を上回る。両方5年であることを保証する。"""
-        five_year_factor = sum(1 / 1.1 ** n for n in range(1, 6))
-        self.assertAlmostEqual(self.result["bear_factor"], five_year_factor)
-        # 強気も5年分の項しか持たない(6年目以降を含めない)
-        self.assertAlmostEqual(
-            self.result["bull_factor"], sum(0.6 * (1.2 / 1.1) ** n for n in range(1, 6))
-        )
+    def test_models_have_names_that_describe_what_they_measure(self):
+        self.assertEqual(self.result["cash_power_label"], "現金力モデル")
+        self.assertEqual(self.result["liquidation_growth_label"], "清算価値＋成長モデル")
+        self.assertNotIn("bear_case", self.result)
+        self.assertNotIn("bull_case", self.result)
 
-    def test_bear_is_below_bull_for_this_company(self):
-        self.assertLess(self.result["bear_case"], self.result["bull_case"])
-
-    def test_perpetual_reference_value_is_kept(self):
-        """書籍どおりの永久還元値も参考として残す。"""
-        self.assertAlmostEqual(
-            self.result["bear_perpetual"], self.result["net_cash"] + self.result["fcf"] / 0.10
-        )
-        self.assertGreater(self.result["bear_perpetual"], self.result["bear_case"])
+    def test_fcff_uses_resolved_tax_rate_instead_of_zero(self):
+        manual = sample_manual(increase_in_working_capital=100.0, effective_tax_rate=0.30)
+        result = valuation.compute_dcf_taachan(sample_latest(), manual, 6525.0)
+        expected_fcf = 576.0 * (1 - 0.30) + 755.0 - (322.0 + 85.0) - 100.0
+        self.assertAlmostEqual(result["fcf"], expected_fcf)
+        self.assertAlmostEqual(result["tax_rate"], 0.30)
 
     def test_missing_data_is_reported_not_guessed(self):
         result = valuation.compute_dcf_taachan(sample_latest(), sample_manual(), None)
-        self.assertIsNone(result["bull_case"])
-        self.assertIn("清算価値", result["bull_reason"])
-
-    def test_inversion_is_warned_not_hidden(self):
-        """弱気が強気を上回る会社では、計算ミスではない旨を警告する。"""
-        result = valuation.compute_dcf_taachan(
-            sample_latest(operating_cf=99999.0), sample_manual(), 100.0
-        )
-        self.assertGreater(result["bear_case"], result["bull_case"])
-        self.assertTrue(any("弱気シナリオが強気シナリオを上回" in w for w in result["warnings"]))
+        self.assertIsNone(result["liquidation_growth_value"])
+        self.assertIn("清算価値", result["liquidation_growth_reason"])
 
 
 class TestEarningsValueGrading(unittest.TestCase):
-    """項目2の評価が、弱気・強気の大小が逆でも壊れないこと"""
+    """項目2では、測定対象の異なる2モデルを独立に評価する。"""
 
-    def test_scores_use_low_and_high_regardless_of_order(self):
-        normal = grading.grade_earnings_value(None, 5000.0, {"bear_case": 4000.0, "bull_case": 8000.0})
-        inverted = grading.grade_earnings_value(None, 5000.0, {"bear_case": 8000.0, "bull_case": 4000.0})
-        self.assertEqual(normal["score"], inverted["score"], "大小が逆でも同じ判定になるべき")
-        self.assertEqual(normal["score"], 1)
+    def test_each_model_is_scored_independently(self):
+        result = grading.grade_earnings_value(None, 5000.0, {
+            "cash_power_value": 4000.0,
+            "liquidation_growth_value": 8000.0,
+        })
+        self.assertEqual(result["score"], 1)
+        self.assertEqual(result["max_score"], 2)
 
     def test_below_both_scores_full_marks(self):
-        result = grading.grade_earnings_value(None, 1000.0, {"bear_case": 8000.0, "bull_case": 4000.0})
+        result = grading.grade_earnings_value(None, 1000.0, {
+            "cash_power_value": 8000.0,
+            "liquidation_growth_value": 4000.0,
+        })
         self.assertEqual(result["score"], 2)
 
     def test_above_both_scores_zero(self):
-        result = grading.grade_earnings_value(None, 9000.0, {"bear_case": 8000.0, "bull_case": 4000.0})
+        result = grading.grade_earnings_value(None, 9000.0, {
+            "cash_power_value": 8000.0,
+            "liquidation_growth_value": 4000.0,
+        })
         self.assertEqual(result["score"], 0)
+
+    def test_available_model_is_used_when_the_other_is_missing(self):
+        result = grading.grade_earnings_value(None, 5000.0, {
+            "cash_power_value": 8000.0,
+            "liquidation_growth_value": None,
+        })
+        self.assertEqual(result["score"], 1)
+        self.assertEqual(result["max_score"], 1)
 
 
 if __name__ == "__main__":

@@ -66,6 +66,22 @@ def _to_number(text: str) -> float | None:
         return None
 
 
+def _normalize_announcement_date(text: str) -> str | None:
+    """株探の発表日を YYYY-MM-DD にそろえる。"""
+    if not text:
+        return None
+    match = re.search(r"(\d{2,4})[./年-](\d{1,2})[./月-](\d{1,2})日?", text.strip())
+    if not match:
+        return None
+    year = int(match.group(1))
+    if year < 100:
+        year += 2000
+    try:
+        return f"{year:04d}-{int(match.group(2)):02d}-{int(match.group(3)):02d}"
+    except ValueError:
+        return None
+
+
 def _parse_market_cap(text: str) -> float | None:
     """"44兆1,498億円" や "86.9億円" のような表記を円単位のfloatに変換する。
 
@@ -234,7 +250,10 @@ def _parse_quarterly_performance(soup: BeautifulSoup, data: CompanyData) -> None
             continue  # ヘッダー行・空行を除外
         record = {"period": period}
         for key, val in zip(keys[1:], cells[1:]):
-            record[key] = _to_number(val)
+            record[key] = (
+                _normalize_announcement_date(val)
+                if key == "announced_on" else _to_number(val)
+            )
         records.append(record)
 
     data.quarterly_performance = records

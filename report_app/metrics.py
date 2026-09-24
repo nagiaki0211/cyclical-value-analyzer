@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import re
+
 
 def _period_sort_key(period: str) -> tuple:
     try:
@@ -517,7 +519,45 @@ def compute_danger_flags(merged: dict[str, dict], manual: dict) -> list[dict]:
     return flags
 
 
-def compute_quarterly_analysis(quarterly_performance: list[dict]) -> list[dict]:
+def _quarter_period_labels(period: str, fiscal_year_end_month: int | None) -> dict:
+    """`26.04-06` を `2027.03期 1Q` のような決算期表記へ変換する。"""
+    fallback = {
+        "fiscal_quarter_label": period,
+        "fiscal_quarter_short": period,
+        "period_detail": period,
+        "period_start": None,
+        "period_end": None,
+        "period_range": period,
+    }
+    if fiscal_year_end_month is None or not 1 <= fiscal_year_end_month <= 12:
+        return fallback
+    match = re.fullmatch(r"(\d{2})\.(\d{2})-(\d{2})", period or "")
+    if not match:
+        return fallback
+
+    start_year = 2000 + int(match.group(1))
+    start_month = int(match.group(2))
+    end_month = int(match.group(3))
+    if not 1 <= start_month <= 12 or not 1 <= end_month <= 12:
+        return fallback
+    end_year = start_year + (1 if end_month < start_month else 0)
+    fiscal_year = end_year + (1 if end_month > fiscal_year_end_month else 0)
+    quarter = ((end_month - fiscal_year_end_month - 1) % 12) // 3 + 1
+    period_start = f"{start_year:04d}.{start_month:02d}"
+    period_end = f"{end_year:04d}.{end_month:02d}"
+    return {
+        "fiscal_quarter_label": f"{fiscal_year:04d}.{fiscal_year_end_month:02d}期 {quarter}Q",
+        "fiscal_quarter_short": f"{str(fiscal_year)[2:]}.{fiscal_year_end_month:02d} {quarter}Q",
+        "period_detail": f"{start_year:04d}.{start_month:02d}-{end_month:02d}",
+        "period_start": period_start,
+        "period_end": period_end,
+        "period_range": f"{period_start}～{period_end}",
+    }
+
+
+def compute_quarterly_analysis(
+    quarterly_performance: list[dict], fiscal_year_end_month: int | None = None,
+) -> list[dict]:
     """
     直近8四半期(単独の3か月間)の実績に、以下を付与する。
 
@@ -532,6 +572,17 @@ def compute_quarterly_analysis(quarterly_performance: list[dict]) -> list[dict]:
     result = []
     for i, rec in enumerate(records):
         enriched = dict(rec)
+        enriched.update(_quarter_period_labels(rec.get("period", ""), fiscal_year_end_month))
+        if i >= 3:
+            ttm_start = _quarter_period_labels(
+                records[i - 3].get("period", ""), fiscal_year_end_month
+            ).get("period_start")
+            if ttm_start and enriched.get("period_end"):
+                enriched["ttm_period_range"] = f"{ttm_start}～{enriched['period_end']}"
+            else:
+                enriched["ttm_period_range"] = None
+        else:
+            enriched["ttm_period_range"] = None
 
         prev_q = records[i - 1] if i >= 1 else None
         prev_y = records[i - 4] if i >= 4 else None

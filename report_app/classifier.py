@@ -5,11 +5,31 @@
 
 from __future__ import annotations
 
+import re
+
 CYCLICAL_SECTOR_KEYWORDS = [
     "鉄鋼", "非鉄金属", "紙", "パルプ", "ガラス", "土石", "石油", "石炭",
     "ゴム", "海運", "造船", "輸送用機器", "自動車", "建設", "半導体", "電気機器",
     "機械", "商社", "卸売", "化学",
 ]
+
+
+def _annual_period_display(period: str | None, forecast: bool = False) -> dict:
+    """通期の決算期と、その会計年度の開始月・終了月を返す。"""
+    match = re.fullmatch(r"(\d{4})\.(\d{2})", period or "")
+    if not match:
+        return {"period": period, "period_range": None}
+    fiscal_year = int(match.group(1))
+    end_month = int(match.group(2))
+    if not 1 <= end_month <= 12:
+        return {"period": period, "period_range": None}
+    start_month = end_month % 12 + 1
+    start_year = fiscal_year if end_month == 12 else fiscal_year - 1
+    suffix = "通期予想" if forecast else "通期"
+    return {
+        "period": f"{fiscal_year:04d}.{end_month:02d}期 {suffix}",
+        "period_range": f"{start_year:04d}.{start_month:02d}～{fiscal_year:04d}.{end_month:02d}",
+    }
 
 
 def classify_asset_value(pbr: float | None, equity_ratio: float | None) -> dict:
@@ -189,10 +209,11 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
         curr_oi = merged_periods[periods[-1]].get("ordinary_income")
         if prev_oi not in (None, 0) and curr_oi is not None:
             change = (curr_oi - prev_oi) / abs(prev_oi)
+            period_display = _annual_period_display(periods[-1])
             signals.append(
                 {
                     "name": "過去通期(経常利益)",
-                    "period": periods[-1],
+                    **period_display,
                     "basis": "実績",
                     "value": change * 100,
                     "direction": "改善" if change > 0 else ("悪化" if change < 0 else "横ばい"),
@@ -214,7 +235,9 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
             signals.append(
                 {
                     "name": "直近四半期(前年同期比)",
-                    "period": latest_q.get("period"),
+                    "period": latest_q.get("fiscal_quarter_label", latest_q.get("period")),
+                    "period_range": latest_q.get("period_range"),
+                    "announced_on": latest_q.get("announced_on"),
                     "basis": "実績",
                     "value": primary,
                     "direction": "改善" if primary > 0 else ("悪化" if primary < 0 else "横ばい"),
@@ -229,7 +252,12 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
                 signals.append(
                     {
                         "name": "TTM(直近12か月累計売上高)",
-                        "period": quarterly_analysis[-1].get("period"),
+                        "period": "直近12か月",
+                        "period_range": quarterly_analysis[-1].get("ttm_period_range"),
+                        "reference_period": quarterly_analysis[-1].get(
+                            "fiscal_quarter_label", quarterly_analysis[-1].get("period")
+                        ),
+                        "announced_on": quarterly_analysis[-1].get("announced_on"),
                         "basis": "実績",
                         "value": change * 100,
                         "direction": "改善" if change > 0 else ("悪化" if change < 0 else "横ばい"),
@@ -244,10 +272,11 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
         forecast_oi = forecast.get("operating_income")
         if prev_oi not in (None, 0) and forecast_oi is not None:
             change = (forecast_oi - prev_oi) / abs(prev_oi)
+            period_display = _annual_period_display(forecast.get("period"), forecast=True)
             signals.append(
                 {
                     "name": "会社予想(営業利益)",
-                    "period": forecast.get("period"),
+                    **period_display,
                     "basis": "会社予想",
                     "value": change * 100,
                     "direction": "増益" if change > 0 else ("減益" if change < 0 else "横ばい"),
