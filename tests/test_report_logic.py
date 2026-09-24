@@ -449,6 +449,24 @@ class TestForecastLabelling(unittest.TestCase):
         self.assertIn("会社予想", bases)
         self.assertIn("実績", bases)
 
+    def test_quarterly_cycle_signal_uses_fiscal_quarter_label(self):
+        quarters = [
+            {
+                "period": period, "revenue": 100.0 + i * 10,
+                "operating_income": 10.0 + i, "net_income": 5.0 + i,
+                "announced_on": "2026-08-07" if i == 4 else None,
+            }
+            for i, period in enumerate(
+                ("25.04-06", "25.07-09", "25.10-12", "26.01-03", "26.04-06")
+            )
+        ]
+        analysis = metrics.compute_quarterly_analysis(quarters, 3)
+        signals = classifier.build_cycle_signals({}, analysis, None)
+        quarterly = next(s for s in signals if s["name"] == "直近四半期(前年同期比)")
+        self.assertEqual(quarterly["period"], "2027.03期 1Q")
+        self.assertEqual(quarterly["period_detail"], "2026.04-06")
+        self.assertEqual(quarterly["announced_on"], "2026-08-07")
+
 
 class TestGrading(unittest.TestCase):
     """13. 情報未入力の項目が最高評価にならない"""

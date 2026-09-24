@@ -214,7 +214,9 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
             signals.append(
                 {
                     "name": "直近四半期(前年同期比)",
-                    "period": latest_q.get("period"),
+                    "period": latest_q.get("fiscal_quarter_label", latest_q.get("period")),
+                    "period_detail": latest_q.get("period_detail"),
+                    "announced_on": latest_q.get("announced_on"),
                     "basis": "実績",
                     "value": primary,
                     "direction": "改善" if primary > 0 else ("悪化" if primary < 0 else "横ばい"),
@@ -229,7 +231,11 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
                 signals.append(
                     {
                         "name": "TTM(直近12か月累計売上高)",
-                        "period": quarterly_analysis[-1].get("period"),
+                        "period": quarterly_analysis[-1].get(
+                            "fiscal_quarter_label", quarterly_analysis[-1].get("period")
+                        ),
+                        "period_detail": quarterly_analysis[-1].get("period_detail"),
+                        "announced_on": quarterly_analysis[-1].get("announced_on"),
                         "basis": "実績",
                         "value": change * 100,
                         "direction": "改善" if change > 0 else ("悪化" if change < 0 else "横ばい"),

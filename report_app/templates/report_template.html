@@ -897,7 +897,11 @@
       {% for sig in cycle_signals %}
       <tr>
         <td>{{ sig.name }}</td>
-        <td>{{ sig.period }}</td>
+        <td>
+          <strong>{{ sig.period }}</strong>
+          {% if sig.period_detail %}<br><span class="note">対象: {{ sig.period_detail }}</span>{% endif %}
+          {% if sig.announced_on %}<br><span class="note">発表: {{ sig.announced_on }}</span>{% endif %}
+        </td>
         <td>{{ sig.basis }}</td>
         <td>{{ sig.direction }}</td>
         <td style="text-align:left;">{{ sig.detail }}</td>
