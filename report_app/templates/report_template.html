@@ -214,9 +214,8 @@
       {% for r in quarterly_analysis %}
       <tr>
         <td>
-          <strong>{{ r.fiscal_quarter_label }}</strong><br>
-          <span class="note">対象: {{ r.period_detail }}</span>
-          {% if r.announced_on %}<br><span class="note">発表: {{ r.announced_on }}</span>{% endif %}
+          <strong>{{ r.fiscal_quarter_label }}（{{ r.period_range }}）</strong>
+          {% if r.announced_on %}<br><span class="note">発表日: {{ r.announced_on }}</span>{% endif %}
         </td>
         <td>{{ "{:,.0f}".format(r.revenue) if r.revenue is not none else "―" }}</td>
         <td>{% if r.yoy_revenue is not none %}{{ "%+.1f"|format(r.yoy_revenue) }}%{% else %}―{% endif %}</td>
@@ -232,7 +231,8 @@
     <p class="note">
       前年同期比(YoY) = 4四半期前(1年前の同じ時期)との比較。前期比(QoQ) = 直前の四半期との比較。
       TTM(直近12か月累計) = 直近4四半期の合計(算出には4四半期分のデータが必要)。出典: 株探(kabutan.jp)。
-      「YYYY.MM期 nQ」はその決算期の第n四半期を表し、対象期間と発表日をその下に表示しています。
+      「YYYY.MM期 nQ（開始月～終了月）」は決算期・四半期と業績の対象期間を表します。
+      決算発表日は業績対象期間に含めず、別に表示しています。
     </p>
   </section>
   {% endif %}
@@ -898,9 +898,9 @@
       <tr>
         <td>{{ sig.name }}</td>
         <td>
-          <strong>{{ sig.period }}</strong>
-          {% if sig.period_detail %}<br><span class="note">対象: {{ sig.period_detail }}</span>{% endif %}
-          {% if sig.announced_on %}<br><span class="note">発表: {{ sig.announced_on }}</span>{% endif %}
+          <strong>{{ sig.period }}{% if sig.period_range %}（{{ sig.period_range }}）{% endif %}</strong>
+          {% if sig.reference_period %}<br><span class="note">基準四半期: {{ sig.reference_period }}</span>{% endif %}
+          {% if sig.announced_on %}<br><span class="note">発表日: {{ sig.announced_on }}</span>{% endif %}
         </td>
         <td>{{ sig.basis }}</td>
         <td>{{ sig.direction }}</td>

@@ -525,6 +525,9 @@ def _quarter_period_labels(period: str, fiscal_year_end_month: int | None) -> di
         "fiscal_quarter_label": period,
         "fiscal_quarter_short": period,
         "period_detail": period,
+        "period_start": None,
+        "period_end": None,
+        "period_range": period,
     }
     if fiscal_year_end_month is None or not 1 <= fiscal_year_end_month <= 12:
         return fallback
@@ -540,10 +543,15 @@ def _quarter_period_labels(period: str, fiscal_year_end_month: int | None) -> di
     end_year = start_year + (1 if end_month < start_month else 0)
     fiscal_year = end_year + (1 if end_month > fiscal_year_end_month else 0)
     quarter = ((end_month - fiscal_year_end_month - 1) % 12) // 3 + 1
+    period_start = f"{start_year:04d}.{start_month:02d}"
+    period_end = f"{end_year:04d}.{end_month:02d}"
     return {
         "fiscal_quarter_label": f"{fiscal_year:04d}.{fiscal_year_end_month:02d}期 {quarter}Q",
         "fiscal_quarter_short": f"{str(fiscal_year)[2:]}.{fiscal_year_end_month:02d} {quarter}Q",
         "period_detail": f"{start_year:04d}.{start_month:02d}-{end_month:02d}",
+        "period_start": period_start,
+        "period_end": period_end,
+        "period_range": f"{period_start}～{period_end}",
     }
 
 
@@ -565,6 +573,16 @@ def compute_quarterly_analysis(
     for i, rec in enumerate(records):
         enriched = dict(rec)
         enriched.update(_quarter_period_labels(rec.get("period", ""), fiscal_year_end_month))
+        if i >= 3:
+            ttm_start = _quarter_period_labels(
+                records[i - 3].get("period", ""), fiscal_year_end_month
+            ).get("period_start")
+            if ttm_start and enriched.get("period_end"):
+                enriched["ttm_period_range"] = f"{ttm_start}～{enriched['period_end']}"
+            else:
+                enriched["ttm_period_range"] = None
+        else:
+            enriched["ttm_period_range"] = None
 
         prev_q = records[i - 1] if i >= 1 else None
         prev_y = records[i - 4] if i >= 4 else None

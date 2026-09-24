@@ -464,8 +464,31 @@ class TestForecastLabelling(unittest.TestCase):
         signals = classifier.build_cycle_signals({}, analysis, None)
         quarterly = next(s for s in signals if s["name"] == "直近四半期(前年同期比)")
         self.assertEqual(quarterly["period"], "2027.03期 1Q")
-        self.assertEqual(quarterly["period_detail"], "2026.04-06")
+        self.assertEqual(quarterly["period_range"], "2026.04～2026.06")
         self.assertEqual(quarterly["announced_on"], "2026-08-07")
+
+    def test_all_cycle_signal_periods_have_correct_ranges(self):
+        merged = {
+            "2025.03": {"is_forecast": False, "ordinary_income": 100.0, "operating_income": 100.0},
+            "2026.03": {"is_forecast": False, "ordinary_income": 90.0, "operating_income": 90.0},
+        }
+        annual = [{"period": "2027.03", "is_forecast": True, "operating_income": 120.0}]
+        quarters = [
+            {
+                "period": period, "revenue": 100.0 + i * 10,
+                "operating_income": 10.0 + i, "net_income": 5.0 + i,
+                "announced_on": "2026-08-07" if i == 4 else None,
+            }
+            for i, period in enumerate(
+                ("25.04-06", "25.07-09", "25.10-12", "26.01-03", "26.04-06")
+            )
+        ]
+        analysis = metrics.compute_quarterly_analysis(quarters, 3)
+        signals = {s["name"]: s for s in classifier.build_cycle_signals(merged, analysis, annual)}
+        self.assertEqual(signals["過去通期(経常利益)"]["period_range"], "2025.04～2026.03")
+        self.assertEqual(signals["直近四半期(前年同期比)"]["period_range"], "2026.04～2026.06")
+        self.assertEqual(signals["TTM(直近12か月累計売上高)"]["period_range"], "2025.07～2026.06")
+        self.assertEqual(signals["会社予想(営業利益)"]["period_range"], "2026.04～2027.03")
 
 
 class TestGrading(unittest.TestCase):
