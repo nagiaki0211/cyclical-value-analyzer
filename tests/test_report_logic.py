@@ -132,6 +132,32 @@ class TestQuickRatio(unittest.TestCase):
         self.assertNotIn(manual["inventory"], [c["value"] for c in quick["components"]])
 
 
+class TestRiskAmountExtraction(unittest.TestCase):
+    """定性リスクの金額は、単位混じり表記と複数金額を正しく扱う。"""
+
+    def test_mixed_japanese_units_and_keyword_proximity(self):
+        text = (
+            "事業譲渡の対価は14億2千3百万円であり、これに伴い"
+            "特別損失38億8千8百万円を計上しました。"
+        )
+        self.assertEqual(
+            edinet.extract_disclosed_amount(text, ("特別損失",)),
+            "3,888百万円",
+        )
+
+    def test_consolidated_amount_is_preferred_in_ir_event(self):
+        item = {
+            "title": "特別損失の計上に関するお知らせ",
+            "date": "2026-08-07",
+            "url": "https://example.com/disclosure.pdf",
+        }
+        event = ir_disclosures._risk_event(
+            item,
+            "特別損失として個別651百万円、連結約800百万円を計上する見込みです。",
+        )
+        self.assertEqual(event["amount_text"], "約800百万円")
+
+
 class TestDcf(unittest.TestCase):
     """3. 弱気DCF ≦ 標準DCF ≦ 強気DCF / 4. WACC > 永久成長率"""
 
