@@ -218,12 +218,12 @@
           {% if r.announced_on %}<br><span class="note">発表日: {{ r.announced_on }}</span>{% endif %}
         </td>
         <td>{{ "{:,.0f}".format(r.revenue) if r.revenue is not none else "―" }}</td>
-        <td>{% if r.yoy_revenue is not none %}{{ "%+.1f"|format(r.yoy_revenue) }}%{% else %}―{% endif %}</td>
-        <td>{% if r.qoq_revenue is not none %}{{ "%+.1f"|format(r.qoq_revenue) }}%{% else %}―{% endif %}</td>
+        <td>{{ r.yoy_revenue_display }}</td>
+        <td>{{ r.qoq_revenue_display }}</td>
         <td>{{ "{:,.0f}".format(r.operating_income) if r.operating_income is not none else "―" }}</td>
-        <td>{% if r.yoy_operating_income is not none %}{{ "%+.1f"|format(r.yoy_operating_income) }}%{% else %}―{% endif %}</td>
+        <td>{{ r.yoy_operating_income_display }}</td>
         <td>{{ "{:,.0f}".format(r.net_income) if r.net_income is not none else "―" }}</td>
-        <td>{% if r.yoy_net_income is not none %}{{ "%+.1f"|format(r.yoy_net_income) }}%{% else %}―{% endif %}</td>
+        <td>{{ r.yoy_net_income_display }}</td>
         <td>{% if r.ttm_revenue is not none %}{{ "{:,.0f}".format(r.ttm_revenue) }}{% else %}<span class="missing">算出不可(直近4四半期未満)</span>{% endif %}</td>
       </tr>
       {% endfor %}
@@ -275,6 +275,51 @@
     </p>
   </section>
   {% endif %}
+
+  <section class="card">
+    <h2>{{ sec.business_signals }}. 受注・需要・価格転嫁モニター</h2>
+    <p class="note">
+      EDINETの受注開示と、企業公式IR・ニュース・TDnetの決算資料・価格改定資料を定型ルールで照合しています。
+      開示されていない値上げ率や受注金額は推定しません。「会社の定性説明」は数値実績ではありません。
+    </p>
+    {% if business_monitor.order_disclosure %}
+    <p><strong>受注高・受注残の開示状況:</strong> {{ business_monitor.order_disclosure.label }}</p>
+    <p class="note">根拠: {{ business_monitor.order_disclosure.evidence }}</p>
+    {% else %}
+    <p class="note"><span class="missing">受注高・受注残の開示方式は未確認</span></p>
+    {% endif %}
+
+    {% if business_monitor.signals %}
+    <table>
+      <tr>
+        <th>種類</th><th>製品・用途</th><th>動向</th><th>改定幅・未転嫁・開始日</th>
+        <th>一時要因</th><th>根拠・出典</th>
+      </tr>
+      {% for signal in business_monitor.signals %}
+      <tr>
+        <td>{{ signal.category }}<br><span class="note">{{ signal.confidence }}</span></td>
+        <td>{{ signal.product }}</td>
+        <td>{{ signal.direction }}</td>
+        <td>
+          {% if signal.revision_amount %}改定幅: {{ signal.revision_amount }}{% elif signal.transfer_gap %}未転嫁見込み: {{ signal.transfer_gap }}{% else %}<span class="missing">数値非開示</span>{% endif %}
+          {% if signal.effective_date %}<br><span class="note">{{ signal.effective_date }}から</span>{% endif %}
+        </td>
+        <td>{% if signal.temporary %}<span style="color:var(--bad);">先入れ・前倒し等を含む</span>{% else %}―{% endif %}</td>
+        <td style="text-align:left;">
+          {{ signal.evidence }}
+          {% if signal.source_url %}<br><span class="note">{{ signal.source_name }} / {{ signal.source_date }} / <a href="{{ signal.source_url }}">原文</a></span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% elif business_monitor.warning %}
+    <p class="note" style="color:var(--bad);">⚠ {{ business_monitor.warning }}</p>
+    {% endif %}
+    <p class="note">
+      判定の見方: A=会社資料で改定幅等の数値を確認、B=会社の定性説明。
+      値上げ発表、適用開始、進展確認、業績寄与は別段階として扱います。
+    </p>
+  </section>
 
   <section class="card">
     <h2>{{ sec.financials }}. 財務諸表の要約</h2>
@@ -426,12 +471,31 @@
     <h3>④ 成長性</h3>
     <table>
       <tr><th>指標</th><th>値</th><th>目安</th><th>判定</th></tr>
-      <tr><td>売上高成長率</td><td>{{ pct(growth_metrics.revenue_growth.value) }}</td><td>{{ growth_metrics.revenue_growth.good }}</td><td>{{ level_cell(growth_metrics.revenue_growth) }}</td></tr>
-      <tr><td>営業利益成長率</td><td>{{ pct(growth_metrics.operating_income_growth.value) }}</td><td>{{ growth_metrics.operating_income_growth.good }}</td><td>{{ level_cell(growth_metrics.operating_income_growth) }}</td></tr>
-      <tr><td>純利益成長率</td><td>{{ pct(growth_metrics.net_income_growth.value) }}</td><td>{{ growth_metrics.net_income_growth.good }}</td><td>{{ level_cell(growth_metrics.net_income_growth) }}</td></tr>
+      <tr><td>売上高成長率</td><td>{{ growth_metrics.revenue_growth.display }}</td><td>{{ growth_metrics.revenue_growth.good }}</td><td>{{ level_cell(growth_metrics.revenue_growth) }}</td></tr>
+      <tr><td>営業利益成長率</td><td>{{ growth_metrics.operating_income_growth.display }}</td><td>{{ growth_metrics.operating_income_growth.good }}</td><td>{{ level_cell(growth_metrics.operating_income_growth) }}</td></tr>
+      <tr><td>純利益成長率</td><td>{{ growth_metrics.net_income_growth.display }}</td><td>{{ growth_metrics.net_income_growth.good }}</td><td>{{ level_cell(growth_metrics.net_income_growth) }}</td></tr>
       <tr><td>総資産回転率</td><td>{% if growth_metrics.asset_turnover.value is not none %}{{ "%.2f"|format(growth_metrics.asset_turnover.value) }}回{% else %}<span class="missing">N/A</span>{% endif %}</td><td>{{ growth_metrics.asset_turnover.good }}</td><td>{{ level_cell(growth_metrics.asset_turnover) }}</td></tr>
       <tr><td>売上債権回転率</td><td>{% if growth_metrics.receivables_turnover.value is not none %}{{ "%.2f"|format(growth_metrics.receivables_turnover.value) }}回{% else %}<span class="missing">N/A</span>{% endif %}</td><td>{{ growth_metrics.receivables_turnover.good }}</td><td>判定不能</td></tr>
     </table>
+    <p class="note">
+      前期が赤字の場合は誤解を招く増減率を表示せず、「黒字転換」「赤字幅縮小／拡大」で示します。
+      基準値が当期値の10%未満の場合は「比較困難」とし、段階評価には使いません。
+    </p>
+
+    {% if cash_conversion_cycle.available %}
+    <h3>⑤ 簡易CCC・回転日数</h3>
+    <table>
+      <tr><th>指標</th><th>日数</th><th>計算方法</th></tr>
+      <tr><td>売上債権回転日数</td><td>{{ "%.1f"|format(cash_conversion_cycle.receivable_days) }}日</td><td>平均売上債権 ÷ 売上高 × 365</td></tr>
+      <tr><td>棚卸資産回転日数</td><td>{{ "%.1f"|format(cash_conversion_cycle.inventory_days) }}日</td><td>平均棚卸資産 ÷ 売上原価 × 365</td></tr>
+      <tr><td>仕入債務回転日数</td><td>{{ "%.1f"|format(cash_conversion_cycle.payable_days) }}日</td><td>平均仕入債務 ÷ 売上原価 × 365</td></tr>
+      <tr style="font-weight:bold;"><td>CCC</td><td>{{ "%.1f"|format(cash_conversion_cycle.ccc) }}日</td><td>売上債権日数 ＋ 棚卸日数 − 仕入債務日数</td></tr>
+    </table>
+    <p class="note">
+      {{ cash_conversion_cycle.basis }}。期首・期末の平均残高を使用しています。
+      仕入高を直接取得できないため、一般的な簡易計算として売上原価を代用した参考値です。
+    </p>
+    {% endif %}
 
     <h3>🚩 危険信号フラグ</h3>
     <table>

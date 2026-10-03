@@ -128,7 +128,7 @@ def classify_cyclical_value(sector: str, merged_periods: dict, pbr: float | None
     """
     is_cyclical_sector = _matches_cyclical_sector(sector)
 
-    from report_app.metrics import ordered_actual_periods
+    from report_app.metrics import analyze_growth_change, ordered_actual_periods
 
     periods = ordered_actual_periods(merged_periods)
     phase = "判定材料不足"
@@ -147,37 +147,55 @@ def classify_cyclical_value(sector: str, merged_periods: dict, pbr: float | None
         )
     )
 
-    growths = []
+    changes = []
     for i in range(1, len(periods)):
         prev_v = merged_periods[periods[i - 1]].get("ordinary_income")
         curr_v = merged_periods[periods[i]].get("ordinary_income")
-        if prev_v not in (None, 0) and curr_v is not None:
-            growths.append((periods[i], (curr_v - prev_v) / abs(prev_v)))
+        if prev_v is not None and curr_v is not None:
+            changes.append((periods[i], analyze_growth_change(curr_v, prev_v)))
 
-    if trough_signal:
+    latest_change = changes[-1][1] if changes else None
+    previous_change = changes[-2][1] if len(changes) >= 2 else None
+    latest_previous_oi = (
+        merged_periods[periods[-2]].get("ordinary_income") if len(periods) >= 2 else None
+    )
+
+    if (
+        latest_change
+        and latest_change["direction"] == "改善"
+        and (
+            (latest_previous_oi is not None and latest_previous_oi < 0)
+            or (pbr is not None and pbr < 1.0)
+        )
+    ):
+        phase = "①回復期の可能性(持続性は未確認)"
+        detail = f"直近の経常利益は{latest_change['display']}で改善方向"
+    elif trough_signal:
         phase = "④不況期(逆張り候補の可能性)"
         detail = "PBR1倍割れ、かつ赤字転落または無配転落を検出"
-    elif len(growths) >= 1:
-        latest_growth = growths[-1][1]
-        prev_growth = growths[-2][1] if len(growths) >= 2 else None
+    elif latest_change:
         oi_values = [merged_periods[p].get("ordinary_income") for p in periods]
         is_peak = (
             len(oi_values) >= 2
             and oi_values[-1] is not None
             and oi_values[-1] == max(v for v in oi_values if v is not None)
         )
-        if is_peak and latest_growth is not None and latest_growth > 0:
+        if is_peak and latest_change["direction"] == "改善":
             phase = "②好況期(ピーク圏の可能性)"
             detail = "経常利益がこれまでの最高水準"
-        elif latest_growth is not None and latest_growth < 0:
-            if prev_growth is not None and prev_growth < latest_growth:
+        elif latest_change["direction"] == "悪化":
+            if previous_change and previous_change["direction"] == "悪化":
                 phase = "③後退期(減速が加速している可能性)"
             else:
                 phase = "③後退期の可能性"
-            detail = f"直近の経常利益が前期比 {latest_growth:.1%}"
-        elif prev_growth is not None and prev_growth < 0 and latest_growth is not None and latest_growth > 0:
+            detail = f"直近の経常利益が前期比 {latest_change['display']}"
+        elif (
+            previous_change
+            and previous_change["direction"] == "悪化"
+            and latest_change["direction"] == "改善"
+        ):
             phase = "①回復期(底打ちから回復に転じた可能性)"
-            detail = "前期はマイナス成長、直近はプラス成長に転換"
+            detail = f"悪化後、直近は{latest_change['display']}で改善方向"
         else:
             phase = "判定材料不足(横ばい傾向)"
 
@@ -199,7 +217,7 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
     (四半期での回復など)を見落とす。判定材料が食い違う場合は、
     無理に1つのラベルへ集約せず、materials として併記する。
     """
-    from report_app.metrics import ordered_actual_periods
+    from report_app.metrics import analyze_growth_change, ordered_actual_periods
 
     signals: list[dict] = []
     periods = ordered_actual_periods(merged_periods)
@@ -207,31 +225,43 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
     if len(periods) >= 2:
         prev_oi = merged_periods[periods[-2]].get("ordinary_income")
         curr_oi = merged_periods[periods[-1]].get("ordinary_income")
-        if prev_oi not in (None, 0) and curr_oi is not None:
-            change = (curr_oi - prev_oi) / abs(prev_oi)
+        if prev_oi is not None and curr_oi is not None:
+            change = analyze_growth_change(curr_oi, prev_oi)
             period_display = _annual_period_display(periods[-1])
+            historical_values = [
+                merged_periods[p].get("ordinary_income") for p in periods[:-1]
+                if merged_periods[p].get("ordinary_income") is not None
+            ]
             signals.append(
                 {
                     "name": "過去通期(経常利益)",
                     **period_display,
                     "basis": "実績",
-                    "value": change * 100,
-                    "direction": "改善" if change > 0 else ("悪化" if change < 0 else "横ばい"),
-                    "detail": f"前期比 {change:+.1%}",
+                    "value": change["value"],
+                    "direction": change["direction"],
+                    "detail": f"前期比 {change['display']}",
+                    "status": change["status"],
+                    "previous_loss": prev_oi < 0,
+                    "is_historical_peak": bool(historical_values) and curr_oi >= max(historical_values),
                 }
             )
 
     if quarterly_analysis:
         latest_q = quarterly_analysis[-1]
-        yoy_revenue = latest_q.get("yoy_revenue")
-        yoy_operating = latest_q.get("yoy_operating_income")
-        if yoy_revenue is not None or yoy_operating is not None:
-            primary = yoy_operating if yoy_operating is not None else yoy_revenue
+        yoy_revenue_display = latest_q.get("yoy_revenue_display", "―")
+        yoy_operating_display = latest_q.get("yoy_operating_income_display", "―")
+        yoy_revenue_direction = latest_q.get("yoy_revenue_direction", "判定不能")
+        yoy_operating_direction = latest_q.get("yoy_operating_income_direction", "判定不能")
+        if yoy_revenue_display != "―" or yoy_operating_display != "―":
+            primary_direction = (
+                yoy_operating_direction
+                if yoy_operating_direction != "判定不能" else yoy_revenue_direction
+            )
             details = []
-            if yoy_revenue is not None:
-                details.append(f"売上高 前年同期比 {yoy_revenue:+.1f}%")
-            if yoy_operating is not None:
-                details.append(f"営業利益 前年同期比 {yoy_operating:+.1f}%")
+            if yoy_revenue_display != "―":
+                details.append(f"売上高 前年同期比 {yoy_revenue_display}")
+            if yoy_operating_display != "―":
+                details.append(f"営業利益 前年同期比 {yoy_operating_display}")
             signals.append(
                 {
                     "name": "直近四半期(前年同期比)",
@@ -239,16 +269,21 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
                     "period_range": latest_q.get("period_range"),
                     "announced_on": latest_q.get("announced_on"),
                     "basis": "実績",
-                    "value": primary,
-                    "direction": "改善" if primary > 0 else ("悪化" if primary < 0 else "横ばい"),
+                    "value": (
+                        latest_q.get("yoy_operating_income")
+                        if latest_q.get("yoy_operating_income") is not None
+                        else latest_q.get("yoy_revenue")
+                    ),
+                    "direction": primary_direction,
+                    "revenue_direction": yoy_revenue_direction,
                     "detail": " ／ ".join(details),
                 }
             )
 
         ttm_values = [q.get("ttm_revenue") for q in quarterly_analysis if q.get("ttm_revenue") is not None]
         if len(ttm_values) >= 2:
-            change = (ttm_values[-1] - ttm_values[-2]) / abs(ttm_values[-2]) if ttm_values[-2] else None
-            if change is not None:
+            change = analyze_growth_change(ttm_values[-1], ttm_values[-2])
+            if change["display"] != "―":
                 signals.append(
                     {
                         "name": "TTM(直近12か月累計売上高)",
@@ -259,9 +294,10 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
                         ),
                         "announced_on": quarterly_analysis[-1].get("announced_on"),
                         "basis": "実績",
-                        "value": change * 100,
-                        "direction": "改善" if change > 0 else ("悪化" if change < 0 else "横ばい"),
-                        "detail": f"前四半期のTTM比 {change:+.1%}",
+                        "value": change["value"],
+                        "direction": change["direction"],
+                        "revenue_direction": change["direction"],
+                        "detail": f"前四半期のTTM比 {change['display']}",
                     }
                 )
 
@@ -270,24 +306,30 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
         latest_actual = merged_periods[periods[-1]]
         prev_oi = latest_actual.get("operating_income")
         forecast_oi = forecast.get("operating_income")
-        if prev_oi not in (None, 0) and forecast_oi is not None:
-            change = (forecast_oi - prev_oi) / abs(prev_oi)
+        if prev_oi is not None and forecast_oi is not None:
+            change = analyze_growth_change(forecast_oi, prev_oi)
             period_display = _annual_period_display(forecast.get("period"), forecast=True)
             signals.append(
                 {
                     "name": "会社予想(営業利益)",
                     **period_display,
                     "basis": "会社予想",
-                    "value": change * 100,
-                    "direction": "増益" if change > 0 else ("減益" if change < 0 else "横ばい"),
-                    "detail": f"直近実績比 {change:+.1%}",
+                    "value": change["value"],
+                    "direction": (
+                        "増益" if change["direction"] == "改善"
+                        else ("減益" if change["direction"] == "悪化" else change["direction"])
+                    ),
+                    "detail": f"直近実績比 {change['display']}",
+                    "status": change["status"],
                 }
             )
 
     return signals
 
 
-def summarize_cycle_signals(signals: list[dict]) -> dict:
+def summarize_cycle_signals(
+    signals: list[dict], pbr: float | None = None, risk_events: list[dict] | None = None,
+) -> dict:
     """
     複数の判定材料から総合判断を作る。材料が矛盾する場合は
     「回復初期」「転換点の可能性」「判定保留」として、断定を避ける。
@@ -304,10 +346,24 @@ def summarize_cycle_signals(signals: list[dict]) -> dict:
     recent_positive = bool(recent) and any(s["direction"] in positive_words for s in recent)
     recent_negative = bool(recent) and all(s["direction"] not in positive_words for s in recent)
     forecast_positive = bool(forecast) and all(s["direction"] in positive_words for s in forecast)
+    latest_at_peak = any(s.get("is_historical_peak") for s in past)
+    previous_loss = any(s.get("previous_loss") for s in past)
+    improving = recent_positive or (not recent and (past_positive or forecast_positive))
 
-    if past_positive and recent_positive:
+    if past_positive and recent_positive and latest_at_peak:
         label = "②好況期〜拡大局面の可能性"
-        detail = "通期・直近ともに改善方向"
+        detail = "通期・直近ともに改善し、直近の経常利益が過去の最高水準以上"
+    elif improving and (previous_loss or (pbr is not None and pbr < 1.0)):
+        label = "①回復期の可能性(持続性は未確認)"
+        reasons = []
+        if previous_loss:
+            reasons.append("前期の経常利益が赤字")
+        if pbr is not None and pbr < 1.0:
+            reasons.append("PBR1倍割れ")
+        detail = "・".join(reasons) + "で、足元は改善方向"
+    elif past_positive and recent_positive:
+        label = "①回復期〜拡大局面の可能性"
+        detail = "通期・直近ともに改善方向だが、経常利益は過去最高水準を確認できない"
     elif not past_positive and recent_positive and forecast_positive:
         label = "①回復初期の可能性(持続性は未確認)"
         detail = "通期実績は悪化しているが、直近四半期と会社予想は改善方向。転換点の可能性がある"
@@ -323,5 +379,17 @@ def summarize_cycle_signals(signals: list[dict]) -> dict:
     else:
         label = "判定保留"
         detail = "判定材料が揃っていないか、方向感が定まっていません"
+
+    business_change_words = ("事業譲渡", "営業譲渡", "株式譲渡", "撤退")
+    has_business_change = any(
+        any(
+            word in ((event.get("text") or "") + " " + " ".join(event.get("keywords") or []))
+            for word in business_change_words
+        )
+        for event in (risk_events or [])
+    )
+    sales_decline = any(s.get("revenue_direction") == "悪化" for s in recent)
+    if has_business_change and sales_decline:
+        detail += "。売上減は事業譲渡・撤退等による事業構成の変化である可能性があります"
 
     return {"label": label, "detail": detail}

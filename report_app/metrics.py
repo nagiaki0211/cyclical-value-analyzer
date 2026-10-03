@@ -78,6 +78,58 @@ def _safe_div(numerator, denominator, multiplier=1.0):
     return numerator / denominator * multiplier
 
 
+def analyze_growth_change(current, previous) -> dict:
+    """
+    増減率と、赤字・黒字をまたぐ場合の表示を一元管理する。
+
+    マイナス値を分母にした増減率は経済的な意味が分かりにくいため、割合を
+    出さずに「黒字転換」「赤字幅縮小」等で示す。前期値が当期値の10%未満
+    と極端に小さい場合も、機械的な伸び率で判定しない。
+    """
+    base = {
+        "value": None, "display": "―", "status": "データ不足",
+        "direction": "判定不能", "comparable": False, "note": None,
+    }
+    if current is None or previous is None:
+        return base
+    if previous < 0:
+        if current > 0:
+            return {**base, "display": "黒字転換", "status": "黒字転換", "direction": "改善"}
+        if current == 0:
+            return {**base, "display": "損益均衡まで改善", "status": "損益均衡", "direction": "改善"}
+        if current > previous:
+            label, direction = "赤字継続（赤字幅縮小）", "改善"
+        elif current < previous:
+            label, direction = "赤字継続（赤字幅拡大）", "悪化"
+        else:
+            label, direction = "赤字継続（横ばい）", "横ばい"
+        return {**base, "display": label, "status": label, "direction": direction}
+    if previous == 0:
+        if current < 0:
+            return {**base, "display": "赤字転落", "status": "赤字転落", "direction": "悪化"}
+        if current > 0:
+            return {
+                **base, "display": "前期0のため比較困難", "status": "比較困難",
+                "direction": "改善", "note": "基準値が0のため増減率は算出しません",
+            }
+        return {**base, "display": "横ばい", "status": "横ばい", "direction": "横ばい"}
+    if current < 0:
+        return {**base, "display": "赤字転落", "status": "赤字転落", "direction": "悪化"}
+
+    value = (current - previous) / previous * 100
+    if current != 0 and abs(previous) < abs(current) * 0.10:
+        return {
+            **base, "display": f"{value:+.1f}%（比較困難）", "status": "比較困難",
+            "direction": "改善" if value > 0 else ("悪化" if value < 0 else "横ばい"),
+            "note": "基準値が小さく比較困難",
+        }
+    return {
+        "value": value, "display": f"{value:+.1f}%", "status": "通常比較",
+        "direction": "改善" if value > 0 else ("悪化" if value < 0 else "横ばい"),
+        "comparable": True, "note": None,
+    }
+
+
 # 各指標の合否判定基準(仕様書 6-2 節の「健全ライン」「良好ライン」に対応)。
 # grading.py の7項目評価も、ここで付与する "ok" 判定を集計して使う
 # (基準値を一箇所にまとめ、指標表と評価の不整合を防ぐため)。
@@ -294,36 +346,42 @@ def compute_growth_metrics(merged: dict[str, dict], manual: dict) -> dict:
     """成長性指標(仕様書 6-2 ③)。直近2期の実績を比較する。"""
     periods = ordered_actual_periods(merged)
     if len(periods) < 2:
+        unavailable_growth = {
+            "value": None, "display": "―", "status": "データ不足",
+            "note": None, "level": LEVEL_UNKNOWN, "score": None, "ok": None,
+        }
         return {
-            "revenue_growth": {"value": None, "good": "10%以上=成長企業", "ok": None},
-            "operating_income_growth": {"value": None, "good": "プラス成長が望ましい", "ok": None},
-            "net_income_growth": {"value": None, "good": "安定成長が理想", "ok": None},
+            "revenue_growth": {**unavailable_growth, "good": "10%以上=成長企業"},
+            "operating_income_growth": {**unavailable_growth, "good": "プラス成長が望ましい"},
+            "net_income_growth": {**unavailable_growth, "good": "安定成長が理想"},
             "asset_turnover": {"value": None, "good": "1.0回以上が理想(業界による)", "ok": None},
             "receivables_turnover": {"value": None, "good": "回数が多いほど資金繰り良好", "ok": None},
         }
     prev, curr = merged[periods[-2]], merged[periods[-1]]
 
-    def growth(key):
-        return _safe_div(
-            None if curr.get(key) is None or prev.get(key) is None else curr[key] - prev[key],
-            prev.get(key),
-            100,
-        )
-
-    revenue_growth_value = growth("revenue")
-    operating_income_growth_value = growth("operating_income")
-    net_income_growth_value = growth("net_income")
+    revenue_growth = analyze_growth_change(curr.get("revenue"), prev.get("revenue"))
+    operating_income_growth = analyze_growth_change(
+        curr.get("operating_income"), prev.get("operating_income")
+    )
+    net_income_growth = analyze_growth_change(curr.get("net_income"), prev.get("net_income"))
     asset_turnover_value = _safe_div(curr.get("revenue"), curr.get("total_assets"))
 
+    def growth_metric(change: dict, good: str, thresholds: tuple[float, float, float]) -> dict:
+        result = _metric(change["value"], _JUDGE_GE, *thresholds, good=good)
+        result.update({
+            "display": change["display"], "status": change["status"], "note": change["note"],
+        })
+        return result
+
     return {
-        "revenue_growth": _metric(
-            revenue_growth_value, _JUDGE_GE, 10, 3, 0, good="10%以上=成長企業",
+        "revenue_growth": growth_metric(
+            revenue_growth, "10%以上=成長企業", (10, 3, 0),
         ),
-        "operating_income_growth": _metric(
-            operating_income_growth_value, _JUDGE_GE, 10, 0, -10, good="プラス成長が望ましい",
+        "operating_income_growth": growth_metric(
+            operating_income_growth, "プラス成長が望ましい", (10, 0, -10),
         ),
-        "net_income_growth": _metric(
-            net_income_growth_value, _JUDGE_GE, 10, 0, -10, good="安定成長が理想",
+        "net_income_growth": growth_metric(
+            net_income_growth, "安定成長が理想", (10, 0, -10),
         ),
         "asset_turnover": _metric(
             asset_turnover_value, _JUDGE_GE, 1.0, 0.8, 0.5, good="1.0回以上が理想(業界による)",
@@ -336,6 +394,61 @@ def compute_growth_metrics(merged: dict[str, dict], manual: dict) -> dict:
             "score": None,
             "ok": None,
         },
+    }
+
+
+def compute_cash_conversion_cycle(latest: dict, manual: dict) -> dict:
+    """平均残高と売上原価を使った簡易CCC・各回転日数を計算する。"""
+    revenue = latest.get("revenue")
+    cost_of_sales = manual.get("cost_of_sales")
+    if cost_of_sales is None and revenue is not None and manual.get("gross_profit") is not None:
+        cost_of_sales = revenue - manual["gross_profit"]
+
+    def with_electronic(base_key: str, electronic_key: str) -> float | None:
+        base_value = manual.get(base_key)
+        if base_value is None:
+            return None
+        return base_value + (manual.get(electronic_key) or 0.0)
+
+    receivables = with_electronic("receivables", "electronically_recorded_receivables")
+    receivables_prev = with_electronic(
+        "receivables_prev_year", "electronically_recorded_receivables_prev_year"
+    )
+    inventory = manual.get("inventory")
+    inventory_prev = manual.get("inventory_prev_year")
+    payables = manual.get("trade_payables")
+    payables_prev = manual.get("trade_payables_prev_year")
+
+    fields = {
+        "売上高": revenue, "売上原価": cost_of_sales,
+        "当期売上債権": receivables, "前期売上債権": receivables_prev,
+        "当期棚卸資産": inventory, "前期棚卸資産": inventory_prev,
+        "当期仕入債務": payables, "前期仕入債務": payables_prev,
+    }
+    missing = [label for label, value in fields.items() if value is None]
+    if missing or revenue in (0, None) or cost_of_sales in (0, None):
+        return {"available": False, "missing": missing, "reason": _missing_reason(fields)}
+
+    average_receivables = (receivables + receivables_prev) / 2
+    average_inventory = (inventory + inventory_prev) / 2
+    average_payables = (payables + payables_prev) / 2
+    receivable_days = average_receivables / revenue * 365
+    inventory_days = average_inventory / cost_of_sales * 365
+    payable_days = average_payables / cost_of_sales * 365
+    return {
+        "available": True,
+        "receivable_days": receivable_days,
+        "inventory_days": inventory_days,
+        "payable_days": payable_days,
+        "ccc": receivable_days + inventory_days - payable_days,
+        "components": {
+            "average_receivables": average_receivables,
+            "average_inventory": average_inventory,
+            "average_payables": average_payables,
+            "revenue": revenue,
+            "cost_of_sales": cost_of_sales,
+        },
+        "basis": "簡易CCC（仕入高の代わりに売上原価を使用）",
     }
 
 
@@ -588,18 +701,20 @@ def compute_quarterly_analysis(
         prev_y = records[i - 4] if i >= 4 else None
 
         for key in ("revenue", "operating_income", "net_income"):
-            enriched[f"qoq_{key}"] = _safe_div(
-                None if prev_q is None or rec.get(key) is None or prev_q.get(key) is None
-                else rec[key] - prev_q[key],
-                prev_q.get(key) if prev_q else None,
-                100,
+            qoq = analyze_growth_change(
+                rec.get(key), prev_q.get(key) if prev_q else None
             )
-            enriched[f"yoy_{key}"] = _safe_div(
-                None if prev_y is None or rec.get(key) is None or prev_y.get(key) is None
-                else rec[key] - prev_y[key],
-                prev_y.get(key) if prev_y else None,
-                100,
+            yoy = analyze_growth_change(
+                rec.get(key), prev_y.get(key) if prev_y else None
             )
+            enriched[f"qoq_{key}"] = qoq["value"]
+            enriched[f"qoq_{key}_display"] = qoq["display"]
+            enriched[f"qoq_{key}_direction"] = qoq["direction"]
+            enriched[f"qoq_{key}_note"] = qoq["note"]
+            enriched[f"yoy_{key}"] = yoy["value"]
+            enriched[f"yoy_{key}_display"] = yoy["display"]
+            enriched[f"yoy_{key}_direction"] = yoy["direction"]
+            enriched[f"yoy_{key}_note"] = yoy["note"]
             if i >= 3:
                 last4 = records[i - 3 : i + 1]
                 values = [r.get(key) for r in last4]

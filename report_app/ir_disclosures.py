@@ -9,14 +9,16 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from report_app.business_signals import extract_business_signals, merge_signals
 from report_app.edinet import RISK_EVENT_KEYWORDS, extract_disclosed_amount
 
 
-_DATE_RE = re.compile(r"(20\d{2})[./年-](\d{1,2})[./月-](\d{1,2})日?")
+_DATE_RE = re.compile(r"(20\d{2})\s*[./年-]\s*(\d{1,2})\s*[./月-]\s*(\d{1,2})\s*日?")
+_FULLWIDTH_DATE_TRANSLATION = str.maketrans("０１２３４５６７８９．", "0123456789.")
 
 
 def _parse_date(text: str) -> date | None:
-    match = _DATE_RE.search(text)
+    match = _DATE_RE.search((text or "").translate(_FULLWIDTH_DATE_TRANSLATION))
     if not match:
         return None
     try:
@@ -59,6 +61,7 @@ def discover_official_ir_index(corporate_url: str | None, report_date: date) -> 
     queue = [corporate_url]
     visited: set[str] = set()
     best: dict | None = None
+    all_items: dict[tuple[str, str], dict] = {}
     keywords = ("ir", "investor", "株主", "投資家", "ニュース", "news", "開示", "library")
 
     while queue and len(visited) < 12:
@@ -75,9 +78,13 @@ def discover_official_ir_index(corporate_url: str | None, report_date: date) -> 
         page_title = soup.title.get_text(" ", strip=True) if soup.title else ""
         page_marker = (url + " " + page_title).lower()
         is_ir_page = any(k in page_marker for k in ("/ir", "investor", "投資家", "株主"))
-        items = parse_ir_index(response.text, url, report_date) if is_ir_page else []
+        is_news_page = any(k in page_marker for k in ("/news", "ニュース", "新着情報"))
+        items = parse_ir_index(response.text, url, report_date) if (is_ir_page or is_news_page) else []
+        for item in items:
+            all_items[(item["date"], item["url"])] = item
         if items and (best is None or items[0]["date"] > best["items"][0]["date"]):
-            best = {"url": url, "items": items, "source_name": "企業公式IR"}
+            if is_ir_page:
+                best = {"url": url, "items": items, "source_name": "企業公式IR"}
 
         candidates = []
         for anchor in soup.find_all("a", href=True):
@@ -92,6 +99,10 @@ def discover_official_ir_index(corporate_url: str | None, report_date: date) -> 
         for linked in candidates:
             if linked not in visited and linked not in queue:
                 queue.append(linked)
+    if best:
+        best["all_items"] = sorted(
+            all_items.values(), key=lambda row: (row["date"], row["title"]), reverse=True
+        )
     return best
 
 
@@ -147,6 +158,29 @@ def _pdf_text(content: bytes) -> str:
         return ""
 
 
+def _document_text(url: str, referer: str | None = None) -> str:
+    """PDF/HTMLの別に依存せず、公式開示本文をテキスト化する。"""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if referer:
+        headers["Referer"] = referer
+    try:
+        response = requests.get(url, timeout=20, headers=headers)
+        response.raise_for_status()
+    except requests.RequestException:
+        return ""
+    content_type = response.headers.get("Content-Type", "").lower()
+    if "pdf" in content_type or response.content[:4] == b"%PDF":
+        return _pdf_text(response.content)
+    return BeautifulSoup(response.text, "html.parser").get_text(" ", strip=True)
+
+
+def _business_document(title: str) -> bool:
+    return any(keyword in title for keyword in (
+        "決算", "業績", "説明資料", "価格改定", "値上げ", "値下げ",
+        "受注", "販売", "製品価格",
+    ))
+
+
 def _risk_event(item: dict, text: str, source_name: str = "企業公式IR") -> dict | None:
     normalized = " ".join(text.split())
     title_matched = [keyword for keyword in RISK_EVENT_KEYWORDS if keyword in item["title"]]
@@ -189,6 +223,7 @@ def fetch_latest_ir_disclosures(
     """最新日の公式IRを取得。失敗時は明示的な未確認状態を返す。"""
     report_date = report_date or date.today()
     source = None
+    discovered = discover_official_ir_index(corporate_url, report_date) if corporate_url else None
     if official_ir_url:
         try:
             response = requests.get(
@@ -204,18 +239,21 @@ def fetch_latest_ir_disclosures(
         except requests.RequestException:
             source = None
     if not source or not source["items"]:
-        source = discover_official_ir_index(corporate_url, report_date)
+        source = discovered
+    elif discovered:
+        source["all_items"] = discovered.get("all_items", discovered.get("items", []))
     if not source or not source["items"]:
         source = fetch_recent_tdnet_disclosures(code, report_date)
     url = source["url"] if source else (official_ir_url or corporate_url)
     empty = {
         "confirmed": False, "latest_date": None, "retrieved_at": None, "items": [],
-        "risk_events": [], "source_url": url,
+        "risk_events": [], "business_signals": [], "source_url": url,
         "warning": "最新IR・TDnet未確認",
     }
     if not source or not source["items"]:
         return empty
     items = source["items"]
+    all_items = source.get("all_items", items)
 
     latest_date = items[0]["date"]
     latest_items = [item for item in items if item["date"] == latest_date]
@@ -230,20 +268,30 @@ def fetch_latest_ir_disclosures(
         document_text = ""
         if item["url"].lower().split("?")[0].endswith(".pdf"):
             try:
-                document = requests.get(
-                    item["url"], timeout=20,
-                    headers={"User-Agent": "Mozilla/5.0", "Referer": url},
-                )
-                document.raise_for_status()
-                document_text = _pdf_text(document.content)
-            except requests.RequestException:
-                pass
+                document_text = _document_text(item["url"], url)
+            except Exception:
+                document_text = ""
         event = _risk_event(item, document_text, source.get("source_name", "企業公式IR"))
         if event:
             events.append(event)
+
+    signals: list[dict] = []
+    signal_items = [
+        item for item in all_items
+        if _business_document(item["title"])
+        and latest_day - date.fromisoformat(item["date"]) <= timedelta(days=240)
+    ][:8]
+    for item in signal_items:
+        document_text = _document_text(item["url"], url)
+        if not document_text:
+            continue
+        source_info = dict(item)
+        source_info["source_name"] = source.get("source_name", "企業公式IR")
+        signals = merge_signals(signals, extract_business_signals(document_text, source_info))
     return {
         "confirmed": True, "latest_date": latest_date,
         "retrieved_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "items": latest_items, "risk_events": events, "source_url": url,
+        "items": latest_items, "risk_events": events,
+        "business_signals": signals, "source_url": url,
         "source_name": source.get("source_name", "企業公式IR"), "warning": None,
     }

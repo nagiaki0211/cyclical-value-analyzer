@@ -30,7 +30,12 @@ TEMPLATE = {
     "investment_securities_noncurrent": None,  # 投資有価証券(固定資産。修正ネットキャッシュ用)
     "receivables": None,  # 受取手形・売掛金(電子記録債権を除く)
     "electronically_recorded_receivables": None,
+    "receivables_prev_year": None,
+    "electronically_recorded_receivables_prev_year": None,
     "inventory": None,
+    "inventory_prev_year": None,
+    "trade_payables": None,  # 支払手形・買掛金・電子記録債務(簡易CCC用)
+    "trade_payables_prev_year": None,
     "other_current_assets": None,
     "current_assets": None,
     "tangible_fixed_assets": None,
@@ -44,6 +49,7 @@ TEMPLATE = {
     "interest_bearing_debt": None,
     # 損益計算書の補完項目
     "gross_profit": None,
+    "cost_of_sales": None,  # 売上原価(簡易CCC用。仕入高の代替分母)
     "depreciation_amortization": None,  # 減価償却費(EV/EBITDA計算用)
     "capital_expenditure_tangible": None,  # 有形固定資産取得支出(正の金額)
     "capital_expenditure_intangible": None,  # 無形固定資産取得支出(正の金額)
@@ -66,8 +72,6 @@ TEMPLATE = {
     "treasury_stock_purchase": None,  # 自己株式の取得額(百万円。CF上は支出=マイナス)
     # 危険信号フラグ判定の補助情報
     "capital_increase_notes": None,  # 増資履歴に関するメモ(第三者割当増資の有無等)
-    "receivables_prev_year": None,  # 前年の売掛金(急増チェック用)
-    "inventory_prev_year": None,  # 前年の棚卸資産(急増チェック用)
     # 定性情報(項目6: 株主重視姿勢)
     "business_history": None,  # 沿革
     "shareholder_return_notes": None,  # 自社株買い実績等

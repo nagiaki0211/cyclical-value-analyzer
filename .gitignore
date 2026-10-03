@@ -16,6 +16,7 @@ ENV/
 
 # 個別銘柄・企業分析レポート生成アプリ: 生成物と手入力データ
 output/*.html
+output/*_AI分析依頼書.md
 manual_data/*.json
 report_app/.cache/
 

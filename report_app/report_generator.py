@@ -9,7 +9,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from report_app import advanced_metrics, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation
+from report_app import ai_analysis_package, advanced_metrics, business_signals, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation
 from report_app.edinet_config import get_edinet_api_key
 from report_app.manual_input import load_or_create_manual_data
 from report_app.svg_chart import bar_chart_svg
@@ -136,7 +136,7 @@ def _enrich_manual_data_with_edinet(code: str, manual: dict, latest_period: str 
         "submit_date": detail.get("_edinet_submit_date"),
         "filled_fields": filled_fields,
     }
-    for key in ("_segments", "_major_shareholders", "_risk_events",
+    for key in ("_segments", "_major_shareholders", "_risk_events", "_order_disclosure",
                 "_interest_bearing_debt_breakdown", "_capital_history",
                 "_goodwill_inferred_zero", "_securities_inferred_zero"):
         manual[key] = detail.get(key)
@@ -250,7 +250,7 @@ def _build_data_sources(code: str, company_data, latest_period: str | None, manu
     ir_status = manual.get("_ir_status")
     if ir_status and ir_status.get("confirmed"):
         sources.append({
-            "items": "最新の適時開示・定性リスク",
+            "items": "最新の適時開示・定性リスク・受注需要・価格転嫁",
             "source_name": ir_status.get("source_name", "企業公式IR / TDnet"),
             "source_url": ir_status.get("source_url"),
             "document_date": ir_status.get("latest_date"),
@@ -274,6 +274,7 @@ def _build_section_numbers(flags: dict) -> dict:
         ("annual", True),
         ("quarterly", flags.get("quarterly")),
         ("segments", flags.get("segments")),
+        ("business_signals", True),
         ("financials", True),
         ("indicators", True),
         ("shareholders", flags.get("shareholders")),
@@ -327,10 +328,22 @@ def generate_report(code: str) -> Path:
         code, manual.get("official_ir_url"), company_data.corporate_url,
     )
     manual["_ir_status"] = ir_status
+    extracted_signals = ir_status.get("business_signals") or []
+    combined_business_signals = business_signals.merge_signals(extracted_signals)
+    order_disclosure = manual.get("_order_disclosure")
+    business_monitor = {
+        "signals": combined_business_signals,
+        "order_disclosure": order_disclosure,
+        "warning": None if combined_business_signals else (
+            "公式資料から受注・需要・価格転嫁の明示情報を確認できませんでした。"
+            "非開示であることを意味するとは限らないため、原文確認が必要です。"
+        ),
+    }
 
     health_metrics = metrics.compute_health_metrics(latest, manual)
     profitability_metrics = metrics.compute_profitability_metrics(latest, manual)
     growth_metrics = metrics.compute_growth_metrics(merged, manual)
+    cash_conversion_cycle = metrics.compute_cash_conversion_cycle(latest, manual)
     danger_flags = metrics.compute_danger_flags(merged, manual)
 
     roic = advanced_metrics.compute_roic(latest, manual)
@@ -445,7 +458,9 @@ def generate_report(code: str) -> Path:
     cycle_signals = classifier.build_cycle_signals(
         merged, quarterly_analysis, company_data.annual_performance
     )
-    cycle_summary = classifier.summarize_cycle_signals(cycle_signals)
+    cycle_summary = classifier.summarize_cycle_signals(
+        cycle_signals, pbr=effective_pbr, risk_events=risk_events
+    )
     cyclical_type["phase"] = cycle_summary["label"]
     cyclical_type["detail"] = cycle_summary["detail"]
     summary_text = summary.build_summary(
@@ -493,14 +508,16 @@ def generate_report(code: str) -> Path:
 
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=True)
     template = env.get_template("report_template.html")
+    generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     html = template.render(
         company=company_data,
-        generated_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        generated_at=generated_at,
         latest_period=latest_period,
         latest=latest,
         health_metrics=health_metrics,
         profitability_metrics=profitability_metrics,
         growth_metrics=growth_metrics,
+        cash_conversion_cycle=cash_conversion_cycle,
         danger_flags=danger_flags,
         liquidation=liquidation,
         dcf=dcf,
@@ -523,6 +540,7 @@ def generate_report(code: str) -> Path:
         quarterly_advice=QUARTERLY_ADVICE,
         segments=segments,
         segments_total=segments_total,
+        business_monitor=business_monitor,
         major_shareholders=major_shareholders,
         governance=governance,
         roic=roic,
@@ -547,4 +565,14 @@ def generate_report(code: str) -> Path:
     safe_name = (company_data.name or code).replace("/", "_")
     out_path = OUTPUT_DIR / f"{code}_{safe_name}_report.html"
     out_path.write_text(html, encoding="utf-8")
+    ai_analysis_package.write_analysis_request(
+        out_path,
+        code=code,
+        company_name=company_data.name or code,
+        report_filename=out_path.name,
+        generated_at=generated_at,
+        data_sources=data_sources,
+        ir_status=ir_status,
+        business_monitor=business_monitor,
+    )
     return out_path

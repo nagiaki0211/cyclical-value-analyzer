@@ -235,6 +235,16 @@ ELECTRONIC_RECEIVABLE_TAGS = [
     ("jppfs_cor", "ElectronicallyRecordedMonetaryClaims"),
 ]
 
+TRADE_PAYABLES_SINGLE_TAG_CANDIDATES = [
+    ("jppfs_cor", "NotesAndAccountsPayableTrade"),
+    ("jpigp_cor", "TradeAndOtherPayablesCLIFRS"),
+]
+TRADE_PAYABLES_JGAAP_SUM_TAGS = [
+    "NotesPayableTrade", "AccountsPayableTrade",
+    "ElectronicallyRecordedObligationsOperatingCL",
+    "ElectronicallyRecordedObligationsOperating",
+]
+
 # 有利子負債の構成科目。「1年内返済予定の長期借入金」「1年内償還予定の社債」は
 # 流動負債側に別掲されるため、これを落とすと有利子負債が過小になり、
 # EV/EBITDA・ROIC・ネットキャッシュがまとめて過小評価される。
@@ -292,6 +302,13 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
         facts, ELECTRONIC_RECEIVABLE_TAGS
     )
 
+    trade_payables = _first_available(facts, TRADE_PAYABLES_SINGLE_TAG_CANDIDATES)
+    if trade_payables is None:
+        trade_payables = _sum_available(
+            facts, "jppfs_cor", TRADE_PAYABLES_JGAAP_SUM_TAGS
+        )
+    result["trade_payables"] = trade_payables
+
     debt = _sum_available(facts, "jpigp_cor", INTEREST_BEARING_DEBT_IFRS_TAGS)
     if debt is not None:
         debt_rows = _debt_breakdown(facts, "jpigp_cor", INTEREST_BEARING_DEBT_IFRS_TAGS)
@@ -304,15 +321,16 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     # 損益計算書の項目(期間集計値)は貸借対照表と異なり、
     # contextRef が "CurrentYearDuration" になる。
     gross_profit = _get_fact(facts, "jppfs_cor", "GrossProfit", context="CurrentYearDuration")
+    cost_of_sales = _first_available(
+        facts,
+        [("jppfs_cor", "CostOfSales"), ("jpigp_cor", "CostOfSalesIFRS")],
+        context="CurrentYearDuration",
+    )
     if gross_profit is None:
-        cost_of_sales = _first_available(
-            facts,
-            [("jppfs_cor", "CostOfSales"), ("jpigp_cor", "CostOfSalesIFRS")],
-            context="CurrentYearDuration",
-        )
         if cost_of_sales is not None and kabutan_revenue is not None:
             gross_profit = kabutan_revenue - cost_of_sales
     result["gross_profit"] = gross_profit
+    result["cost_of_sales"] = cost_of_sales
 
     result["other_current_assets"] = _first_available(
         facts, [("jppfs_cor", "OtherCA"), ("jpigp_cor", "OtherCurrentAssetsCAIFRS")]
@@ -389,10 +407,24 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
         prev_receivables = _sum_available(facts, "jppfs_cor", RECEIVABLES_JGAAP_SUM_TAGS, context="Prior1YearInstant")
     result["receivables_prev_year"] = prev_receivables
 
+    result["electronically_recorded_receivables_prev_year"] = _first_available(
+        facts, ELECTRONIC_RECEIVABLE_TAGS, context="Prior1YearInstant"
+    )
+
     prev_inventory = _first_available(facts, INVENTORY_SINGLE_TAG_CANDIDATES, context="Prior1YearInstant")
     if prev_inventory is None:
         prev_inventory = _sum_available(facts, "jppfs_cor", INVENTORY_JGAAP_SUM_TAGS, context="Prior1YearInstant")
     result["inventory_prev_year"] = prev_inventory
+
+    prev_trade_payables = _first_available(
+        facts, TRADE_PAYABLES_SINGLE_TAG_CANDIDATES, context="Prior1YearInstant"
+    )
+    if prev_trade_payables is None:
+        prev_trade_payables = _sum_available(
+            facts, "jppfs_cor", TRADE_PAYABLES_JGAAP_SUM_TAGS,
+            context="Prior1YearInstant",
+        )
+    result["trade_payables_prev_year"] = prev_trade_payables
 
     # 貸借対照表の取得自体に成功しているのに該当タグが無い場合は、取得失敗ではなく
     # 「その科目の計上が無い」と判断できる(0として扱う)。のれんを計上していない
@@ -732,6 +764,14 @@ def extract_risk_events(html: str) -> list[dict] | None:
     return events or None
 
 
+def extract_order_disclosure(html: str) -> dict | None:
+    """有報の「受注実績／受注状況」から開示可否を取得する。"""
+    from report_app.business_signals import extract_order_disclosure as extract
+
+    text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    return extract(text)
+
+
 def fetch_balance_sheet_detail_via_edinet(
     sec_code4: str, fiscal_year_end: date, kabutan_revenue: float | None, api_key: str
 ) -> dict | None:
@@ -758,4 +798,5 @@ def fetch_balance_sheet_detail_via_edinet(
     detail["_segments"] = extract_segment_info(html)
     detail["_major_shareholders"] = extract_major_shareholders(html)
     detail["_risk_events"] = extract_risk_events(html)
+    detail["_order_disclosure"] = extract_order_disclosure(html)
     return detail
