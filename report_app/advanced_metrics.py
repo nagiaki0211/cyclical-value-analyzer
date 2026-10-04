@@ -19,6 +19,8 @@ STATUTORY_EFFECTIVE_TAX_RATE = 0.3062  # 日本の法定実効税率の目安(�
 # 単年度の実効税率は、税効果会計・一過性損益・繰延税金資産の取崩し等で
 # 大きく振れる。この範囲を外れた値は「正常な実効税率」とみなさない。
 NORMAL_TAX_RATE_RANGE = (0.15, 0.50)
+BREAKEVEN_MIN_SALES_SPREAD = 0.10
+BREAKEVEN_MIN_REGRESSION_R2 = 0.70
 
 
 def _safe_div(numerator, denominator, multiplier=1.0):
@@ -118,15 +120,17 @@ def compute_valuation_ratios(
     operating_cf: float | None,
     interest_bearing_debt: float | None,
     cash_and_deposits: float | None,
+    securities: float | None = None,
     operating_income: float | None,
     depreciation_amortization: float | None,
     period_label: str | None = None,
     debt_breakdown: list[dict] | None = None,
+    noncontrolling_interests: float | None = None,
 ) -> dict:
     """
     PSR・PCFR・EV/EBITDA。
 
-    EV = 時価総額 + 有利子負債 − 現金及び預金
+    EV = 時価総額 + 有利子負債 + 非支配株主持分 − 現金及び預金 − 有価証券(流動)
     EBITDA = 営業利益 + 減価償却費
 
     第三者が再現できるよう、計算に使った構成要素と対象期間をすべて返す。
@@ -134,8 +138,14 @@ def compute_valuation_ratios(
     実績・TTM・会社予想を混在させない。
     """
     ev = None
-    if market_cap is not None and interest_bearing_debt is not None and cash_and_deposits is not None:
-        ev = market_cap + interest_bearing_debt - cash_and_deposits
+    if all(value is not None for value in (
+        market_cap, interest_bearing_debt, noncontrolling_interests,
+        cash_and_deposits, securities,
+    )):
+        ev = (
+            market_cap + interest_bearing_debt
+            + noncontrolling_interests - cash_and_deposits - securities
+        )
 
     ebitda = None
     if operating_income is not None and depreciation_amortization is not None:
@@ -152,8 +162,10 @@ def compute_valuation_ratios(
         "components": {
             "market_cap": market_cap,
             "interest_bearing_debt": interest_bearing_debt,
+            "noncontrolling_interests": noncontrolling_interests,
             "debt_breakdown": debt_breakdown or [],
             "cash_and_deposits": cash_and_deposits,
+            "securities": securities,
             "operating_income": operating_income,
             "depreciation_amortization": depreciation_amortization,
             "revenue": revenue,
@@ -359,27 +371,80 @@ def compute_breakeven_analysis(annual_performance: list[dict]) -> dict:
         if not r.get("is_forecast") and r.get("revenue") is not None and r.get("operating_income") is not None
     ]
     if len(actual) < 2:
-        return {"available": False}
+        return {"available": False, "reason": "実績が2期未満のため算出できません"}
 
     high = max(actual, key=lambda r: r["revenue"])
     low = min(actual, key=lambda r: r["revenue"])
     if high["revenue"] == low["revenue"]:
-        return {"available": False}
+        return {"available": False, "reason": "売上高の差がないため算出できません"}
+
+    sales_spread = (high["revenue"] - low["revenue"]) / abs(low["revenue"])
+    if sales_spread < BREAKEVEN_MIN_SALES_SPREAD:
+        return {
+            "available": False,
+            "reason": "売上高の高低差が10%未満で、高低点法の推定誤差が大きいため算出しません",
+            "sales_spread": sales_spread * 100,
+        }
 
     contribution_margin_ratio = (high["operating_income"] - low["operating_income"]) / (
         high["revenue"] - low["revenue"]
     )
-    if contribution_margin_ratio <= 0:
+    if contribution_margin_ratio <= 0 or contribution_margin_ratio >= 1:
         # 売上高が多い期の方が利益が少ない(またはその逆)場合、2点間の関係が
         # 右肩上がりにならず、高低点法の前提が成り立たない。事業構造の変化や
         # 一時費用等、単純な変動費・固定費モデルでは説明できない要因が
         # あると考えられるため、無理に数値を出さず「算出不可」とする。
-        return {"available": False, "reason": "変動費率がマイナスまたはゼロとなり、概算が成立しませんでした"}
+        return {
+            "available": False,
+            "reason": "限界利益率が0%以下または100%以上となり、高低点法の前提が成立しません",
+            "contribution_margin_ratio": contribution_margin_ratio * 100,
+        }
 
-    fixed_cost = high["operating_income"] - contribution_margin_ratio * high["revenue"]
+    # 営業利益 = 売上高×限界利益率 − 固定費、したがって
+    # 固定費 = 売上高×限界利益率 − 営業利益。
+    fixed_cost = contribution_margin_ratio * high["revenue"] - high["operating_income"]
     breakeven_revenue = (
         fixed_cost / contribution_margin_ratio if contribution_margin_ratio != 0 else None
     )
+
+    if fixed_cost <= 0 or breakeven_revenue is None or breakeven_revenue <= 0:
+        return {
+            "available": False,
+            "reason": "固定費または損益分岐点が0以下となり、高低点法の前提が成立しません",
+            "contribution_margin_ratio": contribution_margin_ratio * 100,
+            "fixed_cost": fixed_cost,
+            "breakeven_revenue": breakeven_revenue,
+        }
+
+    regression_r2 = None
+    if len(actual) >= 4:
+        xs = [row["revenue"] for row in actual]
+        ys = [row["operating_income"] for row in actual]
+        x_mean = sum(xs) / len(xs)
+        y_mean = sum(ys) / len(ys)
+        denominator = sum((x - x_mean) ** 2 for x in xs)
+        slope = (
+            sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys)) / denominator
+            if denominator else None
+        )
+        if slope is not None:
+            intercept = y_mean - slope * x_mean
+            predicted = [slope * x + intercept for x in xs]
+            residual = sum((y - estimate) ** 2 for y, estimate in zip(ys, predicted))
+            total = sum((y - y_mean) ** 2 for y in ys)
+            regression_r2 = 1 - residual / total if total else None
+        if regression_r2 is None or regression_r2 < BREAKEVEN_MIN_REGRESSION_R2:
+            display = "算出不能" if regression_r2 is None else f"{regression_r2:.2f}"
+            return {
+                "available": False,
+                "reason": (
+                    "4期以上の回帰分析で売上高と営業利益の関係が弱く"
+                    f"（R²={display}、基準{BREAKEVEN_MIN_REGRESSION_R2:.2f}未満）、"
+                    "高低点法の前提が成立しないため算出しません"
+                ),
+                "regression_r2": regression_r2,
+                "sales_spread": sales_spread * 100,
+            }
 
     latest_revenue = actual[-1]["revenue"]
     safety_margin = None
@@ -395,4 +460,6 @@ def compute_breakeven_analysis(annual_performance: list[dict]) -> dict:
         "breakeven_revenue": breakeven_revenue,
         "latest_revenue": latest_revenue,
         "safety_margin": safety_margin,
+        "sales_spread": sales_spread * 100,
+        "regression_r2": regression_r2,
     }

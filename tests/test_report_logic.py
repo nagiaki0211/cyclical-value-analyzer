@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from report_app import advanced_metrics, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation
+from report_app import ai_analysis_package, advanced_metrics, business_signals, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation
 from report_app.report_generator import _build_price_basis, _build_section_numbers, _check_source_dates
 from report_app.scraper import _parse_market_cap
 
@@ -27,7 +27,7 @@ def sample_manual(**overrides) -> dict:
     """新日本理化(4406) 2026.03期の実データに基づくテスト用データ(単位: 百万円)。"""
     base = {
         "cash_and_deposits": 5685.0,
-        "securities": None,               # 流動資産の有価証券は無し
+        "securities": 0.0,                # 流動資産の有価証券は無し
         "investment_securities_noncurrent": 10503.0,
         "receivables": 7453.0,
         "electronically_recorded_receivables": 1164.0,
@@ -43,6 +43,7 @@ def sample_manual(**overrides) -> dict:
         "current_liabilities": 10292.0,
         "fixed_liabilities": 9065.0,
         "total_liabilities": 19357.0,
+        "noncontrolling_interests": 0.0,
         "goodwill": 0.0,
         "interest_bearing_debt": 7269.0,
         "depreciation_amortization": 755.0,
@@ -240,8 +241,36 @@ class TestDcf(unittest.TestCase):
     def test_equity_value_bridge(self):
         """株主価値 = 企業価値 + 現金 − 有利子負債(ネットデットの符号方向)。"""
         for scenario in self.dcf["scenarios"]:
-            expected = scenario["enterprise_value"] + self.dcf["cash"] - self.dcf["debt"]
+            expected = (
+                scenario["enterprise_value"] + self.dcf["cash"] - self.dcf["debt"]
+                - self.dcf["noncontrolling_interests"]
+            )
             self.assertAlmostEqual(scenario["equity_value"], expected, places=6)
+
+    def test_noncontrolling_interests_are_deducted_from_equity_value(self):
+        without = valuation.compute_dcf(
+            sample_latest(), sample_manual(noncontrolling_interests=0.0), None
+        )
+        with_nci = valuation.compute_dcf(
+            sample_latest(), sample_manual(noncontrolling_interests=4884.0), None
+        )
+        self.assertAlmostEqual(
+            without["scenarios"][0]["equity_value"]
+            - with_nci["scenarios"][0]["equity_value"],
+            4884.0,
+        )
+
+    def test_current_securities_are_added_to_dcf_cash(self):
+        without = valuation.compute_dcf(sample_latest(), sample_manual(securities=0.0), None)
+        with_securities = valuation.compute_dcf(
+            sample_latest(), sample_manual(securities=2644.0), None
+        )
+        self.assertAlmostEqual(with_securities["cash"] - without["cash"], 2644.0)
+        self.assertAlmostEqual(
+            with_securities["scenarios"][0]["equity_value"]
+            - without["scenarios"][0]["equity_value"],
+            2644.0,
+        )
 
     def test_enterprise_value_is_sum_of_present_values(self):
         for scenario in self.dcf["scenarios"]:
@@ -285,8 +314,10 @@ class TestValuationRatios(unittest.TestCase):
             operating_cf=latest["operating_cf"],
             interest_bearing_debt=manual["interest_bearing_debt"],
             cash_and_deposits=manual["cash_and_deposits"],
+            securities=manual["securities"],
             operating_income=latest["operating_income"],
             depreciation_amortization=manual["depreciation_amortization"],
+            noncontrolling_interests=manual["noncontrolling_interests"],
             period_label="2026.03",
             debt_breakdown=[
                 {"label": "短期借入金", "value": 260.0},
@@ -298,7 +329,8 @@ class TestValuationRatios(unittest.TestCase):
     def test_ev_is_reproducible_from_components(self):
         c = self.ratios["components"]
         self.assertAlmostEqual(
-            self.ratios["ev"], c["market_cap"] + c["interest_bearing_debt"] - c["cash_and_deposits"]
+            self.ratios["ev"], c["market_cap"] + c["interest_bearing_debt"]
+            + c["noncontrolling_interests"] - c["cash_and_deposits"] - c["securities"]
         )
 
     def test_ebitda_is_reproducible_from_components(self):
@@ -311,6 +343,20 @@ class TestValuationRatios(unittest.TestCase):
         self.assertAlmostEqual(self.ratios["ev_ebitda"], self.ratios["ev"] / self.ratios["ebitda"])
         # 8,690 + 7,269 − 5,685 = 10,274 ／ 576 + 755 = 1,331 → 約7.72倍
         self.assertAlmostEqual(self.ratios["ev_ebitda"], 7.72, places=1)
+
+    def test_noncontrolling_interests_are_added_to_ev(self):
+        values = dict(self.ratios["components"])
+        with_nci = advanced_metrics.compute_valuation_ratios(
+            market_cap=values["market_cap"], revenue=values["revenue"],
+            operating_cf=values["operating_cf"],
+            interest_bearing_debt=values["interest_bearing_debt"],
+            cash_and_deposits=values["cash_and_deposits"],
+            securities=values["securities"],
+            operating_income=values["operating_income"],
+            depreciation_amortization=values["depreciation_amortization"],
+            noncontrolling_interests=4884.0,
+        )
+        self.assertAlmostEqual(with_nci["ev"] - self.ratios["ev"], 4884.0)
 
     def test_debt_breakdown_sums_to_total(self):
         c = self.ratios["components"]
@@ -430,6 +476,73 @@ class TestQuarterlyAnalysis(unittest.TestCase):
         self.assertEqual(company.quarterly_performance[0]["announced_on"], "2026-08-07")
 
 
+class TestGrowthChangeHandling(unittest.TestCase):
+    """赤字をまたぐ比較では、意味のない増減率を表示・判定しない。"""
+
+    def test_loss_to_profit_is_labelled_turnaround(self):
+        change = metrics.analyze_growth_change(50.0, -100.0)
+        self.assertEqual(change["display"], "黒字転換")
+        self.assertEqual(change["direction"], "改善")
+        self.assertIsNone(change["value"])
+        self.assertFalse(change["comparable"])
+
+    def test_continuing_loss_shows_narrowing_or_widening(self):
+        narrower = metrics.analyze_growth_change(-60.0, -100.0)
+        wider = metrics.analyze_growth_change(-150.0, -100.0)
+        self.assertIn("赤字幅縮小", narrower["display"])
+        self.assertEqual(narrower["direction"], "改善")
+        self.assertIn("赤字幅拡大", wider["display"])
+        self.assertEqual(wider["direction"], "悪化")
+        self.assertIsNone(narrower["value"])
+        self.assertIsNone(wider["value"])
+
+    def test_tiny_base_is_flagged_as_hard_to_compare(self):
+        change = metrics.analyze_growth_change(100.0, 5.0)
+        self.assertIn("比較困難", change["display"])
+        self.assertEqual(change["status"], "比較困難")
+        self.assertFalse(change["comparable"])
+
+    def test_quarterly_yoy_uses_same_turnaround_rule(self):
+        quarters = [
+            {"period": f"Q{i}", "revenue": 100.0, "operating_income": value,
+             "net_income": value}
+            for i, value in enumerate((-10.0, 1.0, 2.0, 3.0, 20.0))
+        ]
+        latest = metrics.compute_quarterly_analysis(quarters)[-1]
+        self.assertEqual(latest["yoy_operating_income_display"], "黒字転換")
+        self.assertIsNone(latest["yoy_operating_income"])
+
+
+class TestCashConversionCycle(unittest.TestCase):
+    """売上債権・棚卸資産・仕入債務の平均残高から簡易CCCを算出する。"""
+
+    def test_ccc_uses_average_balances_and_includes_electronic_receivables(self):
+        manual = sample_manual(
+            cost_of_sales=24000.0,
+            electronically_recorded_receivables_prev_year=1000.0,
+            trade_payables=6000.0,
+            trade_payables_prev_year=5000.0,
+        )
+        result = metrics.compute_cash_conversion_cycle(sample_latest(), manual)
+        self.assertTrue(result["available"])
+        average_receivables = ((7453.0 + 1164.0) + (7570.0 + 1000.0)) / 2
+        expected_receivable_days = average_receivables / 32105.0 * 365
+        expected_inventory_days = ((5596.0 + 5448.0) / 2) / 24000.0 * 365
+        expected_payable_days = ((6000.0 + 5000.0) / 2) / 24000.0 * 365
+        self.assertAlmostEqual(result["receivable_days"], expected_receivable_days)
+        self.assertAlmostEqual(result["inventory_days"], expected_inventory_days)
+        self.assertAlmostEqual(result["payable_days"], expected_payable_days)
+        self.assertAlmostEqual(
+            result["ccc"],
+            expected_receivable_days + expected_inventory_days - expected_payable_days,
+        )
+
+    def test_ccc_reports_missing_inputs_instead_of_guessing(self):
+        result = metrics.compute_cash_conversion_cycle(sample_latest(), sample_manual())
+        self.assertFalse(result["available"])
+        self.assertIn("取得不能", result["reason"])
+
+
 class TestUnitConversion(unittest.TestCase):
     """11. 百万円・億円・円の単位換算が正しい"""
 
@@ -517,6 +630,75 @@ class TestForecastLabelling(unittest.TestCase):
         self.assertEqual(signals["会社予想(営業利益)"]["period_range"], "2026.04～2027.03")
 
 
+class TestCycleJudgment(unittest.TestCase):
+    """好況・回復判定と事業構成変化の注記を一元的に扱う。"""
+
+    @staticmethod
+    def signal(name, direction, **extra):
+        basis = "会社予想" if name.startswith("会社予想") else "実績"
+        return {"name": name, "direction": direction, "basis": basis, **extra}
+
+    def test_boom_phase_requires_historical_peak(self):
+        signals = [
+            self.signal("過去通期(経常利益)", "改善", is_historical_peak=False),
+            self.signal("直近四半期(前年同期比)", "改善"),
+        ]
+        result = classifier.summarize_cycle_signals(signals)
+        self.assertNotIn("②好況期", result["label"])
+
+        signals[0]["is_historical_peak"] = True
+        result = classifier.summarize_cycle_signals(signals)
+        self.assertIn("②好況期", result["label"])
+
+    def test_prior_loss_and_improvement_is_recovery(self):
+        signals = [
+            self.signal(
+                "過去通期(経常利益)", "改善",
+                previous_loss=True, is_historical_peak=False,
+            ),
+            self.signal("直近四半期(前年同期比)", "改善"),
+        ]
+        result = classifier.summarize_cycle_signals(signals)
+        self.assertIn("①回復期", result["label"])
+
+    def test_legacy_classifier_also_handles_loss_to_profit_as_recovery(self):
+        merged = {
+            "2025.03": {"ordinary_income": -100.0, "net_income": -80.0, "dps": 0.0},
+            "2026.03": {"ordinary_income": 50.0, "net_income": 40.0, "dps": 2.0},
+        }
+        result = classifier.classify_cyclical_value("機械", merged, pbr=0.8)
+        self.assertIn("①回復期", result["phase"])
+        self.assertIn("黒字転換", result["detail"])
+
+    def test_sub_one_pbr_and_improvement_is_recovery(self):
+        signals = [
+            self.signal("過去通期(経常利益)", "改善", is_historical_peak=False),
+            self.signal("直近四半期(前年同期比)", "改善"),
+        ]
+        result = classifier.summarize_cycle_signals(signals, pbr=0.8)
+        self.assertIn("①回復期", result["label"])
+
+    def test_sales_decline_from_divestiture_is_annotated(self):
+        signals = [
+            self.signal("過去通期(経常利益)", "悪化", is_historical_peak=False),
+            self.signal(
+                "直近四半期(前年同期比)", "悪化", revenue_direction="悪化",
+            ),
+        ]
+        risks = [{"text": "一部事業から撤退", "keywords": ["事業譲渡"]}]
+        result = classifier.summarize_cycle_signals(signals, risk_events=risks)
+        self.assertIn("事業構成の変化", result["detail"])
+
+    def test_temporary_demand_is_added_to_cycle_judgment(self):
+        signals = [self.signal("直近四半期(前年同期比)", "改善")]
+        business = [{"temporary": True, "evidence": "一時的な需要による販売の増加"}]
+        result = classifier.summarize_cycle_signals(
+            signals, pbr=0.8, business_signals=business
+        )
+        self.assertIn("一時要因を含む", result["label"])
+        self.assertEqual(result["temporary_evidence"], ["一時的な需要による販売の増加"])
+
+
 class TestGrading(unittest.TestCase):
     """13. 情報未入力の項目が最高評価にならない"""
 
@@ -549,6 +731,17 @@ class TestGrading(unittest.TestCase):
         self.assertIsNotNone(graded["grade"])
         self.assertGreater(graded["evaluated"], 0)
         self.assertLessEqual(graded["score_ratio"], 1.0)
+
+    def test_dividend_burden_prefers_cashflow_payment(self):
+        result = grading.grade_shareholder_return(
+            eps=200.0, dps=90.0,
+            manual=sample_manual(dividends_paid=2096.0),
+            merged={"2026.03": {"dps": 90.0}}, ordered_periods=["2026.03"],
+            free_cash_flow=5990.0,
+        )
+        self.assertAlmostEqual(result["total_dividend"], 2096.0)
+        self.assertAlmostEqual(result["dividend_burden"], 2096.0 / 5990.0 * 100)
+        self.assertIn("キャッシュフロー計算書", result["dividend_burden_basis"])
 
 
 class TestProfitQuality(unittest.TestCase):
@@ -681,11 +874,34 @@ class TestLiquidationValue(unittest.TestCase):
         self.assertAlmostEqual(result["value"] - without["value"], 1164.0 * 0.85)
         self.assertAlmostEqual(
             result["value"], result["adjusted_assets"] - result["total_liabilities"]
+            - result["noncontrolling_interests"]
         )
 
     def test_unreflected_costs_are_disclosed(self):
         result = valuation.compute_liquidation_value(sample_manual(securities=0.0))
         self.assertTrue(result["unreflected_costs"])
+
+    def test_noncontrolling_interests_are_deducted(self):
+        before = valuation.compute_liquidation_value(
+            sample_manual(securities=0.0, noncontrolling_interests=0.0)
+        )
+        after = valuation.compute_liquidation_value(
+            sample_manual(securities=0.0, noncontrolling_interests=4884.0)
+        )
+        self.assertAlmostEqual(before["value"] - after["value"], 4884.0)
+
+
+class TestBreakevenValidation(unittest.TestCase):
+    def test_weak_sales_profit_relationship_is_not_displayed(self):
+        annual = [
+            {"period": "2023.03", "revenue": 100.0, "operating_income": 10.0},
+            {"period": "2024.03", "revenue": 120.0, "operating_income": 30.0},
+            {"period": "2025.03", "revenue": 140.0, "operating_income": 5.0},
+            {"period": "2026.03", "revenue": 160.0, "operating_income": 40.0},
+        ]
+        result = advanced_metrics.compute_breakeven_analysis(annual)
+        self.assertFalse(result["available"])
+        self.assertIn("回帰分析", result["reason"])
 
 
 class TestNetCash(unittest.TestCase):
@@ -708,6 +924,12 @@ class TestNetCash(unittest.TestCase):
     def test_adjusted_net_cash_includes_investment_securities(self):
         result = valuation.compute_net_cash(sample_latest(), sample_manual())
         self.assertAlmostEqual(result["adjusted"], result["narrow"] + 10503.0)
+
+    def test_narrow_net_cash_includes_current_securities(self):
+        result = valuation.compute_net_cash(
+            sample_latest(), sample_manual(securities=2644.0)
+        )
+        self.assertAlmostEqual(result["narrow"], 5685.0 + 2644.0 - 7269.0)
 
 
 class TestInterestBearingDebtTags(unittest.TestCase):
@@ -741,6 +963,11 @@ class TestInterestBearingDebtTags(unittest.TestCase):
         detail = edinet.extract_balance_sheet_detail(facts, None)
         self.assertEqual(detail["capital_expenditure_total"], 6059779.0)
 
+    def test_cash_dividends_paid_tag_is_resolved(self):
+        facts = {"jppfs_cor:CashDividendsPaidFinCF": {"CurrentYearDuration": -2096.0}}
+        detail = edinet.extract_balance_sheet_detail(facts, None)
+        self.assertEqual(detail["dividends_paid"], 2096.0)
+
 
 class TestGenericCompanyDiscovery(unittest.TestCase):
     def test_corporate_url_is_parsed_without_ticker_mapping(self):
@@ -751,6 +978,18 @@ class TestGenericCompanyDiscovery(unittest.TestCase):
         company = scraper.CompanyData(code="4228")
         scraper._parse_basic_info(soup, company)
         self.assertEqual(company.corporate_url, "https://www.example.co.jp/")
+
+    def test_price_market_timestamp_and_close_are_preserved(self):
+        soup = BeautifulSoup(
+            '<div id="stockinfo_i1"><span class="kabuka">2,955円</span>'
+            '<time datetime="2026-10-02T15:30+09:00">15:30</time></div>',
+            "html.parser",
+        )
+        company = scraper.CompanyData(code="7942")
+        scraper._parse_basic_info(soup, company)
+        self.assertEqual(company.price_date, "2026-10-02")
+        self.assertEqual(company.price_time, "15:30")
+        self.assertEqual(company.price_type, "終値")
 
 
 class TestDisclosureAndCycleConsistency(unittest.TestCase):
@@ -766,6 +1005,46 @@ class TestDisclosureAndCycleConsistency(unittest.TestCase):
         )
         self.assertEqual([r["date"] for r in rows], ["2026-08-07"])
         self.assertEqual(rows[0]["url"], "https://example.com/latest.pdf")
+
+    def test_fullwidth_document_date_is_supported(self):
+        self.assertEqual(
+            ir_disclosures._parse_date("２０２６年３月３０日"), date(2026, 3, 30)
+        )
+
+    def test_ir_index_does_not_assign_release_date_to_footer_navigation(self):
+        html = """
+        <div>
+          <div class="release">2026/07/31 <a href="/result.pdf">第1四半期 決算短信</a></div>
+          <div><div><div><a href="/contact.html">お問い合わせ</a></div></div></div>
+        </div>
+        """
+        rows = ir_disclosures.parse_ir_index(
+            html, "https://example.com/ir/release.html", date(2026, 10, 4)
+        )
+        self.assertEqual([row["title"] for row in rows], ["第1四半期 決算短信"])
+
+    def test_forecast_revision_extracts_first_and_second_half(self):
+        page = """
+        第２四半期（中間期）連結業績予想数値の修正
+        前回発表予想（A） 82,000 3,900 4,000 2,900 110.66
+        今回修正予想（B） 86,000 7,000 7,100 5,500 209.87
+        増減額
+        （ご参考）前期中間期実績 80,000 3,076 3,100 2,500 95.00
+        通期連結業績予想数値の修正
+        前回発表予想（A） 164,000 7,000 7,200 5,000 190.79
+        今回修正予想（B） 168,000 10,000 10,200 7,500 286.18
+        増減額
+        （ご参考）前期実績 155,149 7,765 7,952 6,242 238.00
+        """
+        result = ir_disclosures.extract_forecast_revision(
+            [page], {"title": "業績予想の修正", "date": "2026-07-31", "url": "https://example.com/a.pdf"}
+        )
+        self.assertEqual(result["h1_initial"]["operating_income"], 3900.0)
+        self.assertEqual(result["h1_revised"]["operating_income"], 7000.0)
+        self.assertEqual(result["h2_initial"]["operating_income"], 3100.0)
+        self.assertEqual(result["h2_revised"]["operating_income"], 3000.0)
+        self.assertAlmostEqual(result["h2_operating_income_yoy"], -36.02047, places=4)
+        self.assertTrue(result["warning"])
 
     def test_report_source_date_cannot_be_in_the_future(self):
         sources = [{"source_name": "テスト開示", "document_date": "2026-09-23"}]
@@ -784,6 +1063,188 @@ class TestDisclosureAndCycleConsistency(unittest.TestCase):
         )
         self.assertIn(judgment["label"], text)
         self.assertNotIn("③後退期", text)
+
+
+class TestBusinessSignalExtraction(unittest.TestCase):
+    """受注・需要・価格転嫁は、会社が明示した範囲だけを抽出する。"""
+
+    def test_make_to_stock_company_does_not_show_fake_order_amount(self):
+        text = (
+            "２）受注状況 当社グループは、需要予測に基づく見込生産を行っているため、"
+            "該当事項はありません。３）販売実績"
+        )
+        result = business_signals.extract_order_disclosure(text)
+        self.assertEqual(result["status"], "not_applicable_make_to_stock")
+        self.assertIn("定量開示なし", result["label"])
+
+    def test_4228_price_revision_extracts_product_amount_and_start_date(self):
+        text = (
+            "対象製品：発泡ポリスチレンシート。実施時期：2026年4月21日以降の出荷分より。"
+            "発泡ポリスチレンシートの価格改定は120円／kgの値上げとします。"
+        )
+        source = {"title": "価格改定", "date": "2026-03-30", "url": "https://example.com/a.pdf"}
+        rows = business_signals.extract_business_signals(text, source)
+        price = next(row for row in rows if row["category"] == "価格転嫁")
+        self.assertEqual(price["product"], "発泡ポリスチレンシート")
+        self.assertEqual(price["revision_amount"], "120円/kg")
+        self.assertEqual(price["confidence"], "A: 数値を会社資料で確認")
+
+    def test_price_revision_date_is_not_guessed_from_another_sentence(self):
+        text = (
+            "対象製品：発泡ポリスチレンシート。"
+            "2026年4月21日以降の出荷分より価格改定を実施し、120円／kg値上げします。"
+        )
+        rows = business_signals.extract_business_signals(
+            text, {"title": "価格改定", "date": "2026-03-30", "url": "x"}
+        )
+        self.assertEqual(rows[0]["effective_date"], "2026-04-21")
+
+    def test_4406_qualitative_pass_through_keeps_amount_undisclosed(self):
+        text = (
+            "自動車産業向け製品及び電子材料向け製品につきましては、需要が堅調に推移しました。"
+            "適正な販売価格への転嫁を機動的に進めたことにより、売上高は前年同期を上回りました。"
+        )
+        rows = business_signals.extract_business_signals(
+            text, {"title": "第1四半期決算短信", "date": "2026-08-07", "url": "x"}
+        )
+        price = next(row for row in rows if row["category"] == "価格転嫁")
+        self.assertIsNone(price["revision_amount"])
+        self.assertEqual(price["confidence"], "B: 会社の定性説明")
+
+    def test_unpassed_percentage_is_not_treated_as_price_increase(self):
+        text = (
+            "年間ベースで見た場合、約15％程度は価格転嫁が追いつかない可能性があると"
+            "見込んでおります。"
+        )
+        rows = business_signals.extract_business_signals(
+            text, {"title": "決算説明会質疑応答", "date": "2026-05-16", "url": "x"}
+        )
+        price = next(row for row in rows if row["category"] == "価格転嫁")
+        self.assertIsNone(price["revision_amount"])
+        self.assertEqual(price["transfer_gap"], "15%")
+        self.assertEqual(price["confidence"], "A: 数値を会社資料で確認")
+
+    def test_advance_demand_is_flagged_as_temporary(self):
+        rows = business_signals.extract_business_signals(
+            "水産用途は先入れ需要により出荷数量が前年を上回りました。",
+            {"title": "第1四半期決算短信", "date": "2026-07-31", "url": "x"},
+        )
+        self.assertTrue(rows[0]["temporary"])
+
+    def test_increase_and_decrease_in_same_sentence_is_mixed(self):
+        rows = business_signals.extract_business_signals(
+            "自動車分野は増加しましたが、非自動車分野では需要が減少しました。",
+            {"title": "決算短信", "date": "2026-07-31", "url": "x"},
+        )
+        self.assertEqual(rows[0]["direction"], "混在")
+
+    def test_product_uses_sentence_subject_not_only_quoted_brand(self):
+        rows = business_signals.extract_business_signals(
+            "食品容器用の発泡ポリスチレンシート「スチレンペーパー」を中心とした生活資材製品は、需要が増加しました。",
+            {"title": "決算短信", "date": "2026-07-31", "url": "x"},
+        )
+        self.assertEqual(rows[0]["product"], "生活資材製品（スチレンペーパー中心）")
+
+    def test_same_sentence_combines_demand_and_price_categories(self):
+        rows = business_signals.extract_business_signals(
+            "一時的な需要による販売の増加や製品価格の改定により、売上高は増加しました。",
+            {"title": "決算短信", "date": "2026-07-31", "url": "x"},
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["category"], "受注・需要／価格転嫁")
+
+    def test_mixed_direction_takes_priority_even_in_price_sentence(self):
+        rows = business_signals.extract_business_signals(
+            "製品価格の改定を進め、国内販売は増加しましたが海外販売は減少しました。",
+            {"title": "決算短信", "date": "2026-07-31", "url": "x"},
+        )
+        self.assertEqual(rows[0]["direction"], "混在")
+
+    def test_merge_combines_legacy_duplicate_categories(self):
+        base = {"product": "全社", "source_date": "2026-07-31", "source_url": "x", "evidence": "同じ文"}
+        merged = business_signals.merge_signals(
+            [{**base, "category": "受注・需要", "temporary": True}],
+            [{**base, "category": "価格転嫁", "temporary": True}],
+        )
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["category"], "受注・需要／価格転嫁")
+
+    def test_numeric_disclosure_is_not_dropped_by_newer_qualitative_rows(self):
+        qualitative = [
+            {"category": "価格転嫁", "product": f"製品{i}",
+             "source_date": "2026-08-01", "evidence": f"根拠{i}",
+             "confidence": "B: 会社の定性説明"}
+            for i in range(20)
+        ]
+        numeric = [{
+            "category": "価格転嫁", "product": "数値製品",
+            "source_date": "2026-03-30", "evidence": "120円/kg",
+            "confidence": "A: 数値を会社資料で確認",
+        }]
+        merged = business_signals.merge_signals(qualitative, numeric)
+        self.assertTrue(any(row["product"] == "数値製品" for row in merged))
+
+
+class TestAiAnalysisPackage(unittest.TestCase):
+    def test_request_keeps_source_date_url_and_no_guessing_rule(self):
+        text = ai_analysis_package.build_analysis_request(
+            code="4228",
+            company_name="積水化成品工業",
+            report_filename="4228_report.html",
+            generated_at="2026-09-27 10:00",
+            data_sources=[{
+                "source_name": "企業公式IR",
+                "document_date": "2026-07-31",
+                "source_url": "https://example.com/ir.pdf",
+            }],
+            ir_status={"latest_date": "2026-07-31"},
+            business_monitor={
+                "order_disclosure": {
+                    "label": "見込生産型のため受注高・受注残の定量開示なし",
+                    "evidence": "主として見込生産",
+                },
+                "signals": [{
+                    "category": "需要・販売数量",
+                    "product": "水産用途",
+                    "temporary": True,
+                    "evidence": "先入れ需要により前年を上回る",
+                    "source_title": "第1四半期決算短信",
+                    "source_date": "2026-07-31",
+                    "source_url": "https://example.com/q1.pdf",
+                }],
+            },
+        )
+        self.assertIn("4228 積水化成品工業", text)
+        self.assertIn("https://example.com/q1.pdf", text)
+        self.assertIn("2026-07-31", text)
+        self.assertIn("一時要因あり", text)
+        self.assertIn("推測で補完しない", text)
+
+    def test_request_path_is_next_to_report(self):
+        path = ai_analysis_package.analysis_request_path(
+            Path("output/4406_新日本理化_report.html")
+        )
+        self.assertEqual(path.name, "4406_新日本理化_AI分析依頼書.md")
+
+    def test_download_filenames_include_code_and_romanized_company_name(self):
+        report_name, request_name = ai_analysis_package.download_filenames(
+            Path("output/4406_新日本理化_report.html")
+        )
+        self.assertEqual(report_name, "4406_shinnihonrika_report.html")
+        self.assertEqual(request_name, "4406_shinnihonrika_AI_analysis_request.md")
+
+    def test_download_filenames_normalize_full_width_latin_name(self):
+        report_name, request_name = ai_analysis_package.download_filenames(
+            Path("output/7942_ＪＳＰ_report.html")
+        )
+        self.assertEqual(report_name, "7942_jsp_report.html")
+        self.assertEqual(request_name, "7942_jsp_AI_analysis_request.md")
+
+    def test_project_instructions_forbid_unverified_estimates(self):
+        text = ai_analysis_package.project_instructions_text()
+        self.assertIn("確認できない項目", text)
+        self.assertIn("補完や推測をしない", text)
+        self.assertIn("資料名", text)
 
 
 class TestTaachanDcf(unittest.TestCase):
@@ -806,6 +1267,13 @@ class TestTaachanDcf(unittest.TestCase):
             self.result["cash_power_value"],
             self.result["net_cash"] + self.result["fcf"] * expected_factor,
         )
+
+    def test_cash_power_model_deducts_noncontrolling_interests(self):
+        result = valuation.compute_dcf_taachan(
+            sample_latest(), sample_manual(noncontrolling_interests=4884.0), 6525.0
+        )
+        expected = result["net_cash"] + result["fcf"] / 0.10 - 4884.0
+        self.assertAlmostEqual(result["cash_power_value"], expected)
 
     def test_liquidation_growth_model_matches_the_book_formula(self):
         expected_factor = sum(0.6 * (1.2 / 1.1) ** n for n in range(1, 6))

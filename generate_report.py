@@ -19,6 +19,7 @@ from __future__ import annotations
 import sys
 
 from report_app.manual_input import manual_data_path
+from report_app.ai_analysis_package import PROJECT_INSTRUCTIONS_PATH, analysis_request_path
 from report_app.report_generator import generate_report
 
 
@@ -33,6 +34,8 @@ def main() -> None:
     out_path = generate_report(code)
 
     print(f"[2/2] レポートを生成しました: {out_path}")
+    print(f"AI分析依頼書: {analysis_request_path(out_path)}")
+    print(f"AIプロジェクト共通指示書（初回のみ）: {PROJECT_INSTRUCTIONS_PATH}")
     manual_path = manual_data_path(code)
     print(
         f"補足: 貸借対照表の内訳などは {manual_path} に手入力で補完できます。"

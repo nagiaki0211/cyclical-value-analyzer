@@ -30,7 +30,12 @@ TEMPLATE = {
     "investment_securities_noncurrent": None,  # 投資有価証券(固定資産。修正ネットキャッシュ用)
     "receivables": None,  # 受取手形・売掛金(電子記録債権を除く)
     "electronically_recorded_receivables": None,
+    "receivables_prev_year": None,
+    "electronically_recorded_receivables_prev_year": None,
     "inventory": None,
+    "inventory_prev_year": None,
+    "trade_payables": None,  # 支払手形・買掛金・電子記録債務(簡易CCC用)
+    "trade_payables_prev_year": None,
     "other_current_assets": None,
     "current_assets": None,
     "tangible_fixed_assets": None,
@@ -40,14 +45,16 @@ TEMPLATE = {
     "current_liabilities": None,
     "fixed_liabilities": None,
     "total_liabilities": None,
+    "noncontrolling_interests": None,  # 非支配株主持分(親会社株主価値への調整用)
     "goodwill": None,
     "interest_bearing_debt": None,
     # 損益計算書の補完項目
     "gross_profit": None,
+    "cost_of_sales": None,  # 売上原価(簡易CCC用。仕入高の代替分母)
     "depreciation_amortization": None,  # 減価償却費(EV/EBITDA計算用)
     "capital_expenditure_tangible": None,  # 有形固定資産取得支出(正の金額)
     "capital_expenditure_intangible": None,  # 無形固定資産取得支出(正の金額)
-    "capital_expenditure_total": None,  # IFRS等で設備投資を合算開示する場合
+    "capital_expenditure_total": None,  # 固定資産取得を合算開示する場合(無形を追加控除しない)
     "increase_in_working_capital": None,  # 運転資本増加額(増加は正、減少は負)
     "income_taxes": None,  # 法人税等(ROIC用の実効税率算出に使用)
     "income_before_taxes": None,  # 税引前当期純利益(同上)
@@ -64,10 +71,14 @@ TEMPLATE = {
     "shares_issued": None,  # 発行済株式数(株)
     "treasury_shares": None,  # 自己株式数(株)
     "treasury_stock_purchase": None,  # 自己株式の取得額(百万円。CF上は支出=マイナス)
+    "treasury_stock_retirement": None,  # 自己株式の消却額(百万円)
+    "retained_earnings_prev_year": None,
+    "retained_earnings_current_year": None,
+    "retained_earnings_transfer": None,  # 利益剰余金から資本剰余金への振替額
+    "dividends_from_surplus": None,  # 剰余金の配当額
+    "dividends_paid": None,  # CF計算書の配当金支払額（配当負担の計算に使用）
     # 危険信号フラグ判定の補助情報
     "capital_increase_notes": None,  # 増資履歴に関するメモ(第三者割当増資の有無等)
-    "receivables_prev_year": None,  # 前年の売掛金(急増チェック用)
-    "inventory_prev_year": None,  # 前年の棚卸資産(急増チェック用)
     # 定性情報(項目6: 株主重視姿勢)
     "business_history": None,  # 沿革
     "shareholder_return_notes": None,  # 自社株買い実績等

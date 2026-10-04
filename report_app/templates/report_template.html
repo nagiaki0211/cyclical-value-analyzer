@@ -105,6 +105,17 @@
   {% endif %}
 
   <section class="card">
+    <h2>算定・表示方法の変更点</h2>
+    <div class="advice-box">
+      最新決算の取りこぼしを防ぐため、TDnetを第一取得元、企業公式IRを補完元とし、決算短信と業績予想修正を別々に確認します。
+      また、固定資産取得額は投資CF合計で代用せず、EDINETまたは決算短信の該当科目を使用します。
+      親会社株主に帰属する価値へ揃えるため簡易修正純資産・現金力モデル・DCFでは非支配株主持分を控除し、EVでは加算します。
+      高低点法の前提が成立しない場合は、誤解を招く数値を表示せず「算出不可」とします。
+    </div>
+    <p class="note">変更理由: 最新性・期間整合性・株主価値の帰属・計算前提を明示し、取得不能な値を推定で補わないため。出典は各表の原文リンクおよび「出典・データ系統」に表示します。</p>
+  </section>
+
+  <section class="card">
     <h2>{{ sec.basic }}. 基本情報</h2>
     <div class="kpi-grid">
       <div class="kpi"><div class="label">証券コード</div><div class="value">{{ company.code }}</div></div>
@@ -126,9 +137,9 @@
     <h3>株価指標の基準時点</h3>
     <table>
       <tr><th>指標</th><th>使用した数値</th></tr>
-      <tr><td>{{ price_basis.per_label }}</td><td>{{ price_basis.per_basis }}</td></tr>
+      <tr><td>{{ price_basis.per_label }}</td><td>{{ price_basis.per_basis }}{% if price_basis.per_note %}<br><span style="color:var(--warn);">⚠ {{ price_basis.per_note }}</span>{% endif %}</td></tr>
       <tr><td>{{ price_basis.pbr_label }}</td><td>{{ price_basis.pbr_basis }}</td></tr>
-      <tr><td>株価基準日</td><td>{{ price_basis.price_as_of }}(生成日時: {{ generated_at }})</td></tr>
+      <tr><td>株価基準日時</td><td>{{ price_basis.price_as_of }}<br><span class="note">レポート取得日時: {{ generated_at }}</span></td></tr>
     </table>
     <p class="note">
       異なる時点の株価・EPS・BPSを混ぜないよう、それぞれの基準を明示しています。
@@ -144,7 +155,9 @@
       <tr><td>＋ {{ row.label }}</td><td>{{ "{:,.0f}".format(row.value) }}</td></tr>
       {% endfor %}
       <tr><td>＋ 有利子負債 合計</td><td>{{ "{:,.0f}".format(valuation_ratios.components.interest_bearing_debt) if valuation_ratios.components.interest_bearing_debt is not none else "N/A" }}</td></tr>
+      <tr><td>＋ 非支配株主持分</td><td>{{ "{:,.0f}".format(valuation_ratios.components.noncontrolling_interests) if valuation_ratios.components.noncontrolling_interests is not none else "N/A" }}</td></tr>
       <tr><td>－ 現金及び預金</td><td>{{ "{:,.0f}".format(valuation_ratios.components.cash_and_deposits) if valuation_ratios.components.cash_and_deposits is not none else "N/A" }}</td></tr>
+      <tr><td>－ 有価証券(流動)</td><td>{{ "{:,.0f}".format(valuation_ratios.components.securities) if valuation_ratios.components.securities is not none else "N/A" }}</td></tr>
       <tr style="font-weight:bold;"><td>＝ EV(企業価値)</td><td>{{ "{:,.0f}".format(valuation_ratios.ev) if valuation_ratios.ev is not none else "N/A" }}</td></tr>
       <tr><td>営業利益</td><td>{{ "{:,.0f}".format(valuation_ratios.components.operating_income) if valuation_ratios.components.operating_income is not none else "N/A" }}</td></tr>
       <tr><td>＋ 減価償却費</td><td>{{ "{:,.0f}".format(valuation_ratios.components.depreciation_amortization) if valuation_ratios.components.depreciation_amortization is not none else "N/A" }}</td></tr>
@@ -152,7 +165,8 @@
       <tr style="font-weight:bold;"><td>EV ÷ EBITDA</td><td>{{ "%.2f"|format(valuation_ratios.ev_ebitda) ~ " 倍" if valuation_ratios.ev_ebitda is not none else "N/A" }}</td></tr>
     </table>
     <p class="note">
-      EV = 時価総額 + 有利子負債 − 現金及び預金、EBITDA = 営業利益 + 減価償却費。
+      EV = 時価総額 + 有利子負債 + 非支配株主持分 − 現金及び預金 − 有価証券(流動)、EBITDA = 営業利益 + 減価償却費。
+      非支配株主持分は連結子会社のうち親会社株主に帰属しない持分であるため、EVに加算しています。
       有利子負債は上記の科目を合算しています(1年内返済予定の長期借入金を含む)。
       時価総額以外は {{ valuation_ratios.period_label }}期の実績値で揃えており、TTM・会社予想とは混在させていません。
       PSR = 時価総額 ÷ 売上高({{ "{:,.0f}".format(valuation_ratios.components.revenue) if valuation_ratios.components.revenue is not none else "N/A" }})、
@@ -195,6 +209,40 @@
       {% endfor %}
     </table>
     <p class="note">単位: 百万円(1株益・1株配のみ円)。出典: 株探(kabutan.jp)。</p>
+
+    {% if forecast_revision %}
+    <h3>会社予想の修正履歴と上期・下期の分解 <span class="unit-note">(営業利益、単位: 百万円)</span></h3>
+    <table>
+      <tr><th>区分</th><th>期初予想</th><th>修正後</th><th>増減</th><th>比較</th></tr>
+      <tr>
+        <td>上期</td>
+        <td>{{ "{:,.0f}".format(forecast_revision.h1_initial.operating_income) }}</td>
+        <td>{{ "{:,.0f}".format(forecast_revision.h1_revised.operating_income) }}</td>
+        <td>{{ "{:+,.0f}".format(forecast_revision.h1_operating_income_revision).replace("-", "−") }}</td>
+        <td>―</td>
+      </tr>
+      <tr>
+        <td>通期</td>
+        <td>{{ "{:,.0f}".format(forecast_revision.fy_initial.operating_income) }}</td>
+        <td>{{ "{:,.0f}".format(forecast_revision.fy_revised.operating_income) }}</td>
+        <td>{{ "{:+,.0f}".format(forecast_revision.fy_operating_income_revision).replace("-", "−") }}</td>
+        <td>―</td>
+      </tr>
+      <tr>
+        <td>下期（通期－上期）</td>
+        <td>{{ "{:,.0f}".format(forecast_revision.h2_initial.operating_income) }}</td>
+        <td>{{ "{:,.0f}".format(forecast_revision.h2_revised.operating_income) }}</td>
+        <td>{{ "{:+,.0f}".format(forecast_revision.h2_operating_income_revision).replace("-", "−") }}</td>
+        <td>{% if forecast_revision.h2_prior_actual %}前年下期実績 {{ "{:,.0f}".format(forecast_revision.h2_prior_actual.operating_income) }} に対し {{ "{:+.1f}".format(forecast_revision.h2_operating_income_yoy).replace("-", "−") }}%{% else %}<span class="missing">前年下期実績未取得</span>{% endif %}</td>
+      </tr>
+    </table>
+    <p class="note">
+      下期は会社が直接開示した値ではなく、通期予想から上期予想を差し引いた計算値です。
+      出典: {{ forecast_revision.source_title }}（発表日 {{ forecast_revision.source_date }}）
+      {% if forecast_revision.source_url %}/ <a href="{{ forecast_revision.source_url }}">原文</a>{% endif %}
+    </p>
+    {% if forecast_revision.warning %}<p class="note" style="color:var(--bad);">⚠ {{ forecast_revision.warning }}</p>{% endif %}
+    {% endif %}
   </section>
 
   {% if quarterly_analysis %}
@@ -218,12 +266,12 @@
           {% if r.announced_on %}<br><span class="note">発表日: {{ r.announced_on }}</span>{% endif %}
         </td>
         <td>{{ "{:,.0f}".format(r.revenue) if r.revenue is not none else "―" }}</td>
-        <td>{% if r.yoy_revenue is not none %}{{ "%+.1f"|format(r.yoy_revenue) }}%{% else %}―{% endif %}</td>
-        <td>{% if r.qoq_revenue is not none %}{{ "%+.1f"|format(r.qoq_revenue) }}%{% else %}―{% endif %}</td>
+        <td>{{ r.yoy_revenue_display }}</td>
+        <td>{{ r.qoq_revenue_display }}</td>
         <td>{{ "{:,.0f}".format(r.operating_income) if r.operating_income is not none else "―" }}</td>
-        <td>{% if r.yoy_operating_income is not none %}{{ "%+.1f"|format(r.yoy_operating_income) }}%{% else %}―{% endif %}</td>
+        <td>{{ r.yoy_operating_income_display }}</td>
         <td>{{ "{:,.0f}".format(r.net_income) if r.net_income is not none else "―" }}</td>
-        <td>{% if r.yoy_net_income is not none %}{{ "%+.1f"|format(r.yoy_net_income) }}%{% else %}―{% endif %}</td>
+        <td>{{ r.yoy_net_income_display }}</td>
         <td>{% if r.ttm_revenue is not none %}{{ "{:,.0f}".format(r.ttm_revenue) }}{% else %}<span class="missing">算出不可(直近4四半期未満)</span>{% endif %}</td>
       </tr>
       {% endfor %}
@@ -277,6 +325,51 @@
   {% endif %}
 
   <section class="card">
+    <h2>{{ sec.business_signals }}. 受注・需要・価格転嫁モニター</h2>
+    <p class="note">
+      EDINETの受注開示と、企業公式IR・ニュース・TDnetの決算資料・価格改定資料を定型ルールで照合しています。
+      開示されていない値上げ率や受注金額は推定しません。「会社の定性説明」は数値実績ではありません。
+    </p>
+    {% if business_monitor.order_disclosure %}
+    <p><strong>受注高・受注残の開示状況:</strong> {{ business_monitor.order_disclosure.label }}</p>
+    <p class="note">根拠: {{ business_monitor.order_disclosure.evidence }}</p>
+    {% else %}
+    <p class="note"><span class="missing">受注高・受注残の開示方式は未確認</span></p>
+    {% endif %}
+
+    {% if business_monitor.signals %}
+    <table>
+      <tr>
+        <th>種類</th><th>製品・用途</th><th>動向</th><th>改定幅・未転嫁・開始日</th>
+        <th>一時要因</th><th>根拠・出典</th>
+      </tr>
+      {% for signal in business_monitor.signals %}
+      <tr>
+        <td>{{ signal.category }}<br><span class="note">{{ signal.confidence }}</span></td>
+        <td>{{ signal.product }}</td>
+        <td>{{ signal.direction }}</td>
+        <td>
+          {% if signal.revision_amount %}改定幅: {{ signal.revision_amount }}{% elif signal.transfer_gap %}未転嫁見込み: {{ signal.transfer_gap }}{% else %}<span class="missing">数値非開示</span>{% endif %}
+          {% if signal.effective_date %}<br><span class="note">{{ signal.effective_date }}から</span>{% endif %}
+        </td>
+        <td>{% if signal.temporary %}<span style="color:var(--bad);">先入れ・前倒し等を含む</span>{% else %}―{% endif %}</td>
+        <td style="text-align:left;">
+          {{ signal.evidence }}
+          {% if signal.source_url %}<br><span class="note">{{ signal.source_name }} / {{ signal.source_date }}{% if signal.source_page %} / PDF {{ signal.source_page }}ページ{% endif %} / <a href="{{ signal.source_url }}">原文</a></span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% elif business_monitor.warning %}
+    <p class="note" style="color:var(--bad);">⚠ {{ business_monitor.warning }}</p>
+    {% endif %}
+    <p class="note">
+      判定の見方: A=会社資料で改定幅等の数値を確認、B=会社の定性説明。
+      値上げ発表、適用開始、進展確認、業績寄与は別段階として扱います。
+    </p>
+  </section>
+
+  <section class="card">
     <h2>{{ sec.financials }}. 財務諸表の要約</h2>
     <h3>貸借対照表(要約) <span class="unit-note">(単位: 百万円)</span></h3>
     <table>
@@ -318,6 +411,19 @@
       </tr>
       {% endfor %}
     </table>
+
+    <h3>自己株式の取得・消却と利益剰余金の変動 <span class="unit-note">(単位: 百万円)</span></h3>
+    <table>
+      <tr><th>項目</th><th>金額</th><th>読み方</th></tr>
+      <tr><td>自己株式の取得</td><td>{% if shareholder_equity_changes.treasury_stock_purchase is not none %}{{ "{:,.0f}".format(shareholder_equity_changes.treasury_stock_purchase) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>会社が市場等から自己株式を買い付けた額</td></tr>
+      <tr><td>自己株式の消却</td><td>{% if shareholder_equity_changes.treasury_stock_retirement is not none %}{{ "{:,.0f}".format(shareholder_equity_changes.treasury_stock_retirement) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>保有する自己株式を消却した額（取得とは別取引）</td></tr>
+      <tr><td>期首 利益剰余金</td><td>{% if shareholder_equity_changes.retained_earnings_opening is not none %}{{ "{:,.0f}".format(shareholder_equity_changes.retained_earnings_opening) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>株主資本等変動計算書</td></tr>
+      <tr><td>＋ 親会社株主に帰属する当期純利益</td><td>{% if shareholder_equity_changes.profit is not none %}{{ "{:,.0f}".format(shareholder_equity_changes.profit) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>利益による増加</td></tr>
+      <tr><td>－ 剰余金の配当</td><td>{% if shareholder_equity_changes.dividends is not none %}{{ "{:,.0f}".format(shareholder_equity_changes.dividends) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>株主への配当による減少</td></tr>
+      <tr><td>－ 資本剰余金への振替</td><td>{% if shareholder_equity_changes.retained_earnings_transfer is not none %}{{ "{:,.0f}".format(shareholder_equity_changes.retained_earnings_transfer) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>自己株式消却に伴う利益剰余金からの振替を含む</td></tr>
+      <tr style="font-weight:bold;"><td>期末 利益剰余金</td><td>{% if shareholder_equity_changes.retained_earnings_closing is not none %}{{ "{:,.0f}".format(shareholder_equity_changes.retained_earnings_closing) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>各変動後の残高</td></tr>
+    </table>
+    <p class="note">自己株式の取得と消却を区別して表示します。出典はEDINET有価証券報告書の株主資本等変動計算書です。複数取引や百万円未満の端数により、表示値の足し引きが期末残高と完全には一致しない場合があります。</p>
   </section>
 
   {% macro level_cell(m) %}
@@ -426,12 +532,31 @@
     <h3>④ 成長性</h3>
     <table>
       <tr><th>指標</th><th>値</th><th>目安</th><th>判定</th></tr>
-      <tr><td>売上高成長率</td><td>{{ pct(growth_metrics.revenue_growth.value) }}</td><td>{{ growth_metrics.revenue_growth.good }}</td><td>{{ level_cell(growth_metrics.revenue_growth) }}</td></tr>
-      <tr><td>営業利益成長率</td><td>{{ pct(growth_metrics.operating_income_growth.value) }}</td><td>{{ growth_metrics.operating_income_growth.good }}</td><td>{{ level_cell(growth_metrics.operating_income_growth) }}</td></tr>
-      <tr><td>純利益成長率</td><td>{{ pct(growth_metrics.net_income_growth.value) }}</td><td>{{ growth_metrics.net_income_growth.good }}</td><td>{{ level_cell(growth_metrics.net_income_growth) }}</td></tr>
+      <tr><td>売上高成長率</td><td>{{ growth_metrics.revenue_growth.display }}</td><td>{{ growth_metrics.revenue_growth.good }}</td><td>{{ level_cell(growth_metrics.revenue_growth) }}</td></tr>
+      <tr><td>営業利益成長率</td><td>{{ growth_metrics.operating_income_growth.display }}</td><td>{{ growth_metrics.operating_income_growth.good }}</td><td>{{ level_cell(growth_metrics.operating_income_growth) }}</td></tr>
+      <tr><td>純利益成長率</td><td>{{ growth_metrics.net_income_growth.display }}</td><td>{{ growth_metrics.net_income_growth.good }}</td><td>{{ level_cell(growth_metrics.net_income_growth) }}</td></tr>
       <tr><td>総資産回転率</td><td>{% if growth_metrics.asset_turnover.value is not none %}{{ "%.2f"|format(growth_metrics.asset_turnover.value) }}回{% else %}<span class="missing">N/A</span>{% endif %}</td><td>{{ growth_metrics.asset_turnover.good }}</td><td>{{ level_cell(growth_metrics.asset_turnover) }}</td></tr>
       <tr><td>売上債権回転率</td><td>{% if growth_metrics.receivables_turnover.value is not none %}{{ "%.2f"|format(growth_metrics.receivables_turnover.value) }}回{% else %}<span class="missing">N/A</span>{% endif %}</td><td>{{ growth_metrics.receivables_turnover.good }}</td><td>判定不能</td></tr>
     </table>
+    <p class="note">
+      前期が赤字の場合は誤解を招く増減率を表示せず、「黒字転換」「赤字幅縮小／拡大」で示します。
+      基準値が当期値の10%未満の場合は「比較困難」とし、段階評価には使いません。
+    </p>
+
+    {% if cash_conversion_cycle.available %}
+    <h3>⑤ 簡易CCC・回転日数</h3>
+    <table>
+      <tr><th>指標</th><th>日数</th><th>計算方法</th></tr>
+      <tr><td>売上債権回転日数</td><td>{{ "%.1f"|format(cash_conversion_cycle.receivable_days) }}日</td><td>平均売上債権 ÷ 売上高 × 365</td></tr>
+      <tr><td>棚卸資産回転日数</td><td>{{ "%.1f"|format(cash_conversion_cycle.inventory_days) }}日</td><td>平均棚卸資産 ÷ 売上原価 × 365</td></tr>
+      <tr><td>仕入債務回転日数</td><td>{{ "%.1f"|format(cash_conversion_cycle.payable_days) }}日</td><td>平均仕入債務 ÷ 売上原価 × 365</td></tr>
+      <tr style="font-weight:bold;"><td>CCC</td><td>{{ "%.1f"|format(cash_conversion_cycle.ccc) }}日</td><td>売上債権日数 ＋ 棚卸日数 − 仕入債務日数</td></tr>
+    </table>
+    <p class="note">
+      {{ cash_conversion_cycle.basis }}。期首・期末の平均残高を使用しています。
+      仕入高を直接取得できないため、一般的な簡易計算として売上原価を代用した参考値です。
+    </p>
+    {% endif %}
 
     <h3>🚩 危険信号フラグ</h3>
     <table>
@@ -481,8 +606,14 @@
       網羅性を保証するものではないため、重要な判断の前には原文をご確認ください。
     </p>
     {% if ir_status.confirmed %}
-    <p class="note" style="color:var(--good);">最新IR・TDnet確認日: <strong>{{ ir_status.latest_date }}</strong>
-      (取得日時: {{ ir_status.retrieved_at }})</p>
+    <table>
+      <tr><th>確認項目</th><th>発表日</th><th>資料</th></tr>
+      <tr><td>IR一覧の最新開示</td><td>{{ ir_status.latest_date }}</td><td>取得日時: {{ ir_status.retrieved_at }}</td></tr>
+      <tr><td>最新の決算短信（当初版）</td><td>{% if ir_status.latest_earnings_original %}{{ ir_status.latest_earnings_original.date }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_earnings_original %}<a href="{{ ir_status.latest_earnings_original.url }}">{{ ir_status.latest_earnings_original.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
+      <tr><td>最新の決算短信（レビュー・訂正版を含む）</td><td>{% if ir_status.latest_earnings %}{{ ir_status.latest_earnings.date }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_earnings %}<a href="{{ ir_status.latest_earnings.url }}">{{ ir_status.latest_earnings.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
+      <tr><td>最新の業績予想修正</td><td>{% if ir_status.latest_forecast_revision %}{{ ir_status.latest_forecast_revision.date }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_forecast_revision %}<a href="{{ ir_status.latest_forecast_revision.url }}">{{ ir_status.latest_forecast_revision.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
+    </table>
+    {% for warning in ir_status.warnings %}<p class="note" style="color:var(--bad);">⚠ {{ warning }}</p>{% endfor %}
     {% else %}
     <p class="note" style="color:var(--bad);">⚠ 最新IR・TDnet未確認</p>
     {% endif %}
@@ -525,7 +656,7 @@
       </div>
     </div>
 
-    <h3>ネットキャッシュ(手元資金 − 有利子負債)</h3>
+    <h3>ネットキャッシュ(現金及び預金＋有価証券〈流動〉−有利子負債)</h3>
     {% if net_cash.available %}
     <table>
       <tr><th>項目</th><th>金額</th></tr>
@@ -549,7 +680,7 @@
       {% endif %}
     </p>
     {% else %}
-    <p class="note"><span class="missing">確認不能</span>(現金及び預金・有利子負債のデータが取得できませんでした)</p>
+    <p class="note"><span class="missing">確認不能</span>(現金及び預金・有価証券〈流動〉・有利子負債のいずれかを取得できませんでした)</p>
     {% endif %}
 
     <h3>たーちゃん式企業価値評価(書籍の方式)</h3>
@@ -562,11 +693,12 @@
       <tr>
         <td>{{ dcf_taachan.cash_power_label }}</td>
         <td style="text-align:left;">
-          ネットキャッシュ ＋ FCF ÷ {{ "%.0f"|format(dcf_taachan.discount_rate * 100) }}%<br>
+          ネットキャッシュ ＋ FCF ÷ {{ "%.0f"|format(dcf_taachan.discount_rate * 100) }}% − 非支配株主持分<br>
           <span class="note">
             {% if dcf_taachan.net_cash is not none %}ネットキャッシュ {{ "{:,.0f}".format(dcf_taachan.net_cash) }}{% else %}ネットキャッシュ N/A{% endif %}
             ＋ {% if dcf_taachan.fcf is not none %}FCF {{ "{:,.0f}".format(dcf_taachan.fcf) }}{% else %}FCF N/A{% endif %}
             × {{ "%.2f"|format(dcf_taachan.cash_power_factor) }}(FCFが継続する前提)
+            − {% if dcf_taachan.noncontrolling_interests is not none %}非支配株主持分 {{ "{:,.0f}".format(dcf_taachan.noncontrolling_interests) }}{% else %}非支配株主持分 N/A{% endif %}
           </span>
         </td>
         <td style="font-weight:bold;">
@@ -594,6 +726,7 @@
       FCFの定義: {{ dcf_taachan.fcf_definition }}。
       現金力モデルはFCFの継続価値、清算価値＋成長モデルは清算価値と今後{{ dcf_taachan.years }}年間の
       成長利益を測っています。期間と測定対象が異なるため、2つの金額を上下限として比較しません。
+      現金力モデルのネットキャッシュは「現金及び預金＋有価証券(流動)−有利子負債」で、親会社株主価値に揃えるため非支配株主持分を控除しています。
       FCFFを使用できる場合の税率: {{ "%.2f"|format(dcf_taachan.tax_rate * 100) }}%
       ({{ dcf_taachan.tax_rate_basis }})。
     </p>
@@ -620,7 +753,7 @@
         {% if dcf.fcf_kind == "FCFF" %}
         NOPAT {{ "{:,.0f}".format(dcf.fcf_components.nopat) }} ＋ 減価償却費 {{ "{:,.0f}".format(dcf.fcf_components.depreciation) }}
         {% if dcf.fcf_components.capex_total_reported is not none %}
-        − 設備投資(合算開示) {{ "{:,.0f}".format(dcf.fcf_components.capex_total) }}
+        − 固定資産取得(有形・無形の合算開示) {{ "{:,.0f}".format(dcf.fcf_components.capex_total) }}
         {% else %}
         − 有形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_tangible) }} − 無形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_intangible) }}
         {% endif %}
@@ -628,7 +761,7 @@
         {% else %}
         営業CF {{ "{:,.0f}".format(dcf.fcf_components.operating_cf) }}
         {% if dcf.fcf_components.capex_total_reported is not none %}
-        − 設備投資(合算開示) {{ "{:,.0f}".format(dcf.fcf_components.capex_total) }}。
+        − 固定資産取得(有形・無形の合算開示) {{ "{:,.0f}".format(dcf.fcf_components.capex_total) }}。
         {% else %}
         − 有形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_tangible) }}
         − 無形固定資産取得 {{ "{:,.0f}".format(dcf.fcf_components.capex_intangible) }}。
@@ -637,8 +770,11 @@
         {% endif %}
       </td></tr>
       <tr><td>予測年数</td><td>{{ dcf.forecast_years }} 年(6年目以降はターミナルバリューで評価)</td></tr>
-      <tr><td>現金(株主価値への加算)</td><td>{{ "{:,.0f}".format(dcf.cash) }} 百万円</td></tr>
+      <tr><td>現金及び預金</td><td>{{ "{:,.0f}".format(dcf.cash_and_deposits) }} 百万円</td></tr>
+      <tr><td>有価証券(流動)</td><td>{{ "{:,.0f}".format(dcf.securities) }} 百万円</td></tr>
+      <tr><td>現金同等物合計(株主価値への加算)</td><td>{{ "{:,.0f}".format(dcf.cash) }} 百万円</td></tr>
       <tr><td>有利子負債(株主価値からの減算)</td><td>{{ "{:,.0f}".format(dcf.debt) }} 百万円</td></tr>
+      <tr><td>非支配株主持分(株主価値からの減算)</td><td>{{ "{:,.0f}".format(dcf.noncontrolling_interests) }} 百万円</td></tr>
       <tr><td>発行済株式数(自己株式控除後)</td><td>{% if dcf.shares_outstanding %}{{ "{:,.0f}".format(dcf.shares_outstanding) }} 株{% else %}N/A{% endif %}</td></tr>
     </table>
 
@@ -684,7 +820,7 @@
       {% endfor %}
     </table>
     <p class="note">
-      株主価値 = 企業価値(予測期間FCFの現在価値 ＋ ターミナルバリューの現在価値) ＋ 現金 − 有利子負債。
+      株主価値 = 企業価値(予測期間FCFの現在価値 ＋ ターミナルバリューの現在価値) ＋ 現金及び預金 ＋ 有価証券(流動) − 有利子負債 − 非支配株主持分。
       ターミナルバリューは {{ dcf.forecast_years }}年目のFCF×(1+永久成長率)÷(WACC−永久成長率) で求め、
       (1+WACC)^{{ dcf.forecast_years }} で現在価値に割り引いています。
       永久成長率がWACC以上になる組み合わせは計算不能(N/A)としています。
@@ -746,12 +882,15 @@
       {% endfor %}
       <tr style="font-weight:bold;"><td>掛け目適用後の資産合計</td><td>{{ "{:,.0f}".format(liquidation.raw_asset_total) }}</td><td>―</td><td>{{ "{:,.0f}".format(liquidation.adjusted_assets) }}</td></tr>
       <tr><td>－ 総負債</td><td colspan="2">―</td><td>{{ "{:,.0f}".format(liquidation.total_liabilities) }}</td></tr>
+      <tr><td>＝ 非支配株主持分控除前</td><td colspan="2">―</td><td>{{ "{:,.0f}".format(liquidation.value_before_noncontrolling) }}</td></tr>
+      <tr><td>－ 非支配株主持分</td><td colspan="2">―</td><td>{{ "{:,.0f}".format(liquidation.noncontrolling_interests) }}</td></tr>
       <tr style="font-weight:bold;"><td>＝ 簡易修正純資産</td><td colspan="2">―</td><td>{{ "{:,.0f}".format(liquidation.value) }}</td></tr>
     </table>
     <p class="note">
       <strong>「清算価値」ではなく「簡易修正純資産」と表記している理由:</strong>
       実際の清算では次の費用が追加で発生しますが、開示が無く推測もしないため反映していません ――
       {{ liquidation.unreflected_costs|join("、") }}。したがってこの金額は清算価値の「上限側の目安」です。
+      親会社株主に帰属する価値に揃えるため、非支配株主持分を控除しています。
       また、土地の含み益・含み損も帳簿価額のままで、時価評価していません。
       なお「PBR1倍割れ」は純資産(帳簿価額)に対する株価の水準を指すもので、この簡易修正純資産とは別の概念です。
     </p>
@@ -779,9 +918,9 @@
     {% endif %}
   </section>
 
-  {% if breakeven.available %}
   <section class="card">
     <h2>{{ sec.breakeven }}. 損益分岐点分析(固定費・変動費の概算) <span class="unit-note">(単位: 百万円)</span></h2>
+    {% if breakeven.available %}
     <div class="advice-box">
       <strong>高低点法による概算:</strong> 売上高が最も多かった{{ breakeven.high_period }}期と、
       最も少なかった{{ breakeven.low_period }}期の実績から、大まかな固定費・変動費の構造を逆算しています。
@@ -799,8 +938,14 @@
       売上減少に対する耐性があると解釈できます。マイナスの場合、現状の売上水準では
       概算上「赤字ライン」に近い、または下回っていることを示します。
     </p>
+    {% else %}
+    <div class="advice-box">
+      <strong>算出不可（高低点法の前提が成立しない）</strong><br>
+      {{ breakeven.reason }}
+    </div>
+    <p class="note">固定費が0以下、限界利益率が0%以下または100%以上、損益分岐点売上高が0以下、売上高の差が10%未満、または4期以上の回帰分析で説明力が低い場合は、誤解を招く数値を表示しません。</p>
+    {% endif %}
   </section>
-  {% endif %}
 
   <section class="card">
     <h2>{{ sec.grades }}. 投資判断(6項目×5段階評価)</h2>
@@ -831,7 +976,8 @@
             {% if g.grade_label %}<strong>{{ g.grade_label }}</strong><br>{% endif %}
             配当性向: {% if g.payout_ratio is not none %}{{ "%.1f"|format(g.payout_ratio) }}%{% else %}<span class="missing">N/A</span>{% endif %}
             ／ 連続配当: {{ g.consecutive_years }}期
-            {% if g.dividend_burden is not none %} ／ FCFに対する配当負担: {{ "%.1f"|format(g.dividend_burden) }}%{% endif %}
+            {% if g.dividend_burden is not none %} ／ FCFに対する配当負担: {{ "%.1f"|format(g.dividend_burden) }}%
+              （配当額 {{ "{:,.0f}".format(g.total_dividend) }}百万円、{{ g.dividend_burden_basis }}）{% endif %}
             <ul style="margin:6px 0 0;padding-left:1.2em;">
               {% for c in g.checks %}
               <li class="note">{{ c.label }}:
@@ -907,6 +1053,11 @@
         <td style="text-align:left;">{{ sig.detail }}</td>
       </tr>
       {% endfor %}
+      <tr>
+        <td>一時要因あり</td><td>最新決算短信</td><td>会社説明</td>
+        <td>{% if cycle_summary.temporary_factor %}<span style="color:var(--bad);">あり</span>{% else %}未検出{% endif %}</td>
+        <td style="text-align:left;">{% if cycle_summary.temporary_factor %}一時要因を含む（持続性は未確認）。{{ cycle_summary.temporary_evidence|join(" / ") }}{% else %}対象キーワードを検出しませんでした{% endif %}</td>
+      </tr>
     </table>
     <p class="note">
       通期実績だけでなく、直近四半期・TTM・会社予想も併せて確認しています。

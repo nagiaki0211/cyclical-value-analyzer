@@ -188,6 +188,17 @@ def _first_available_local_tag(
     return None
 
 
+def _member_fact(
+    facts: dict, prefix: str, tag: str, context_prefix: str, member: str,
+) -> float | None:
+    """ディメンション付きファクトから指定memberの値を取得する。"""
+    values = facts.get(f"{prefix}:{tag}", {})
+    for context, value in values.items():
+        if context.startswith(context_prefix) and member in context and "NonConsolidatedMember" not in context:
+            return value
+    return None
+
+
 # フィールド名 -> (会計基準プレフィックス, タグ名) の候補リスト。
 # JGAAP(jppfs_cor)・IFRS(jpigp_cor)の順で試す。
 FIELD_TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
@@ -196,6 +207,10 @@ FIELD_TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
     "current_liabilities": [("jppfs_cor", "CurrentLiabilities"), ("jpigp_cor", "TotalCurrentLiabilitiesIFRS")],
     "fixed_liabilities": [("jppfs_cor", "NoncurrentLiabilities"), ("jpigp_cor", "NonCurrentLabilitiesIFRS")],
     "total_liabilities": [("jppfs_cor", "Liabilities"), ("jpigp_cor", "LiabilitiesIFRS")],
+    "noncontrolling_interests": [
+        ("jppfs_cor", "NonControllingInterests"),
+        ("jpigp_cor", "NonControllingInterestsIFRS"),
+    ],
     "tangible_fixed_assets": [("jppfs_cor", "PropertyPlantAndEquipment"), ("jpigp_cor", "PropertyPlantAndEquipmentIFRS")],
     "intangible_fixed_assets": [("jppfs_cor", "IntangibleAssets"), ("jpigp_cor", "IntangibleAssetsIFRS")],
     "investments_other": [("jppfs_cor", "InvestmentsAndOtherAssets"), ("jpigp_cor", "InvestmentsAccountedForUsingEquityMethodIFRS")],
@@ -233,6 +248,16 @@ ELECTRONIC_RECEIVABLE_TAGS = [
     ("jppfs_cor", "ElectronicallyRecordedMonetaryClaimsOperatingCA"),
     ("jppfs_cor", "ElectronicallyRecordedMonetaryClaimsOperating"),
     ("jppfs_cor", "ElectronicallyRecordedMonetaryClaims"),
+]
+
+TRADE_PAYABLES_SINGLE_TAG_CANDIDATES = [
+    ("jppfs_cor", "NotesAndAccountsPayableTrade"),
+    ("jpigp_cor", "TradeAndOtherPayablesCLIFRS"),
+]
+TRADE_PAYABLES_JGAAP_SUM_TAGS = [
+    "NotesPayableTrade", "AccountsPayableTrade",
+    "ElectronicallyRecordedObligationsOperatingCL",
+    "ElectronicallyRecordedObligationsOperating",
 ]
 
 # 有利子負債の構成科目。「1年内返済予定の長期借入金」「1年内償還予定の社債」は
@@ -292,6 +317,13 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
         facts, ELECTRONIC_RECEIVABLE_TAGS
     )
 
+    trade_payables = _first_available(facts, TRADE_PAYABLES_SINGLE_TAG_CANDIDATES)
+    if trade_payables is None:
+        trade_payables = _sum_available(
+            facts, "jppfs_cor", TRADE_PAYABLES_JGAAP_SUM_TAGS
+        )
+    result["trade_payables"] = trade_payables
+
     debt = _sum_available(facts, "jpigp_cor", INTEREST_BEARING_DEBT_IFRS_TAGS)
     if debt is not None:
         debt_rows = _debt_breakdown(facts, "jpigp_cor", INTEREST_BEARING_DEBT_IFRS_TAGS)
@@ -304,15 +336,16 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     # 損益計算書の項目(期間集計値)は貸借対照表と異なり、
     # contextRef が "CurrentYearDuration" になる。
     gross_profit = _get_fact(facts, "jppfs_cor", "GrossProfit", context="CurrentYearDuration")
+    cost_of_sales = _first_available(
+        facts,
+        [("jppfs_cor", "CostOfSales"), ("jpigp_cor", "CostOfSalesIFRS")],
+        context="CurrentYearDuration",
+    )
     if gross_profit is None:
-        cost_of_sales = _first_available(
-            facts,
-            [("jppfs_cor", "CostOfSales"), ("jpigp_cor", "CostOfSalesIFRS")],
-            context="CurrentYearDuration",
-        )
         if cost_of_sales is not None and kabutan_revenue is not None:
             gross_profit = kabutan_revenue - cost_of_sales
     result["gross_profit"] = gross_profit
+    result["cost_of_sales"] = cost_of_sales
 
     result["other_current_assets"] = _first_available(
         facts, [("jppfs_cor", "OtherCA"), ("jpigp_cor", "OtherCurrentAssetsCAIFRS")]
@@ -341,7 +374,8 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     result["capital_expenditure_total"] = _first_available(
         facts,
         [("jpigp_cor", "CapitalExpendituresIFRS"),
-         ("jppfs_cor", "CapitalExpenditures")],
+         ("jppfs_cor", "CapitalExpenditures"),
+         ("jppfs_cor", "PurchaseOfNoncurrentAssetsInvCF")],
         context="CurrentYearDuration",
     )
     result["income_taxes"] = _first_available(
@@ -369,11 +403,48 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     )
 
     # 自己株式の取得額(株主還元姿勢の判定に使う。キャッシュフロー計算書上は支出=マイナス)。
-    result["treasury_stock_purchase"] = _first_available(
+    treasury_purchase = _first_available(
         facts,
         [("jppfs_cor", "PurchaseOfTreasuryStockFinCF"), ("jpigp_cor", "PurchaseOfTreasuryStockFinCFIFRS")],
         context="CurrentYearDuration",
     )
+    result["treasury_stock_purchase"] = (
+        abs(treasury_purchase) if treasury_purchase is not None else None
+    )
+    treasury_retirement = _member_fact(
+        facts, "jppfs_cor", "RetirementOfTreasuryStock",
+        "CurrentYearDuration", "TreasuryStockMember",
+    )
+    result["treasury_stock_retirement"] = (
+        abs(treasury_retirement) if treasury_retirement is not None else None
+    )
+    retained_transfer = _member_fact(
+        facts, "jppfs_cor", "TransferToCapitalSurplusFromRetainedEarnings",
+        "CurrentYearDuration", "RetainedEarningsMember",
+    )
+    result["retained_earnings_transfer"] = (
+        abs(retained_transfer) if retained_transfer is not None else None
+    )
+    result["retained_earnings_prev_year"] = _get_fact(
+        facts, "jppfs_cor", "RetainedEarnings", context="Prior1YearInstant"
+    )
+    result["retained_earnings_current_year"] = _get_fact(
+        facts, "jppfs_cor", "RetainedEarnings", context="CurrentYearInstant"
+    )
+    dividends = _get_fact(
+        facts, "jppfs_cor", "DividendsFromSurplus", context="CurrentYearDuration"
+    )
+    result["dividends_from_surplus"] = abs(dividends) if dividends is not None else None
+    dividends_paid = _first_available(
+        facts,
+        [
+            ("jppfs_cor", "CashDividendsPaidFinCF"),
+            ("jppfs_cor", "DividendsPaidFinCF"),
+            ("jpigp_cor", "DividendsPaidFinCFIFRS"),
+        ],
+        context="CurrentYearDuration",
+    )
+    result["dividends_paid"] = abs(dividends_paid) if dividends_paid is not None else None
 
     # 特別利益・特別損失(利益の質の判定で、一過性損益を除いた調整後利益に使う)。
     result["extraordinary_income"] = _get_fact(facts, "jppfs_cor", "ExtraordinaryIncome", context="CurrentYearDuration")
@@ -389,10 +460,24 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
         prev_receivables = _sum_available(facts, "jppfs_cor", RECEIVABLES_JGAAP_SUM_TAGS, context="Prior1YearInstant")
     result["receivables_prev_year"] = prev_receivables
 
+    result["electronically_recorded_receivables_prev_year"] = _first_available(
+        facts, ELECTRONIC_RECEIVABLE_TAGS, context="Prior1YearInstant"
+    )
+
     prev_inventory = _first_available(facts, INVENTORY_SINGLE_TAG_CANDIDATES, context="Prior1YearInstant")
     if prev_inventory is None:
         prev_inventory = _sum_available(facts, "jppfs_cor", INVENTORY_JGAAP_SUM_TAGS, context="Prior1YearInstant")
     result["inventory_prev_year"] = prev_inventory
+
+    prev_trade_payables = _first_available(
+        facts, TRADE_PAYABLES_SINGLE_TAG_CANDIDATES, context="Prior1YearInstant"
+    )
+    if prev_trade_payables is None:
+        prev_trade_payables = _sum_available(
+            facts, "jppfs_cor", TRADE_PAYABLES_JGAAP_SUM_TAGS,
+            context="Prior1YearInstant",
+        )
+    result["trade_payables_prev_year"] = prev_trade_payables
 
     # 貸借対照表の取得自体に成功しているのに該当タグが無い場合は、取得失敗ではなく
     # 「その科目の計上が無い」と判断できる(0として扱う)。のれんを計上していない
@@ -404,7 +489,6 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
         if result.get("securities") is None:
             result["securities"] = 0.0
             result["_securities_inferred_zero"] = True
-
     result.update(_extract_share_counts(facts))
     result["_capital_history"] = _extract_capital_history(facts)
 
@@ -732,6 +816,14 @@ def extract_risk_events(html: str) -> list[dict] | None:
     return events or None
 
 
+def extract_order_disclosure(html: str) -> dict | None:
+    """有報の「受注実績／受注状況」から開示可否を取得する。"""
+    from report_app.business_signals import extract_order_disclosure as extract
+
+    text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+    return extract(text)
+
+
 def fetch_balance_sheet_detail_via_edinet(
     sec_code4: str, fiscal_year_end: date, kabutan_revenue: float | None, api_key: str
 ) -> dict | None:
@@ -758,4 +850,5 @@ def fetch_balance_sheet_detail_via_edinet(
     detail["_segments"] = extract_segment_info(html)
     detail["_major_shareholders"] = extract_major_shareholders(html)
     detail["_risk_events"] = extract_risk_events(html)
+    detail["_order_disclosure"] = extract_order_disclosure(html)
     return detail
