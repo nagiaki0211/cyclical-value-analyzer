@@ -695,7 +695,7 @@ class TestCycleJudgment(unittest.TestCase):
         result = classifier.summarize_cycle_signals(
             signals, pbr=0.8, business_signals=business
         )
-        self.assertIn("一時要因を含む", result["label"])
+        self.assertIn("一時要因あり（持続性は要確認）", result["label"])
         self.assertEqual(result["temporary_evidence"], ["一時的な需要による販売の増加"])
 
 
@@ -1334,6 +1334,381 @@ class TestEarningsValueGrading(unittest.TestCase):
         })
         self.assertEqual(result["score"], 1)
         self.assertEqual(result["max_score"], 1)
+
+
+
+# ---------------------------------------------------------------------------
+# 4406(新日本理化) 2026-10-04 生成レポートを公式IR原文と照合して見つかった問題の回帰テスト
+# ---------------------------------------------------------------------------
+
+# 4406 公式サイトのトップページ構造(タブごとに一覧が並び、リンク文字列の先頭に
+# 開示日がある)を簡略化したもの。別タブに新しい日付の項目がある。
+_4406_TOP_PAGE_HTML = """
+<div class="tab_box">
+  <div class="content_area"><ul class="list_area">
+    <li><a href="/app/upload/information/pdf/news1001.pdf">
+      <div class="sp_box"><span class="day">2026-10-01</span><span class="tug">NEWS</span></div>
+      <span>組織変更のお知らせ</span></a></li>
+  </ul></div>
+  <div class="content_area hide"><ul class="list_area">
+    <li><a href="/app/upload/information/pdf/a17b.pdf">
+      <div class="sp_box"><span class="day">2026-08-07</span><span class="tug ir">IR</span></div>
+      <span>2027年３月期連結業績予想の修正に関するお知らせ</span></a></li>
+    <li><a href="/app/upload/information/pdf/64d8.pdf">
+      <div class="sp_box"><span class="day">2026-08-07</span><span class="tug ir">IR</span></div>
+      <span>2027年３月期 第１四半期決算短信〔日本基準〕（連結）</span></a></li>
+    <li><a href="/app/upload/information/pdf/3228.pdf">
+      <div class="sp_box"><span class="day">2026-06-24</span><span class="tug ir">IR</span></div>
+      <span>役員人事に関するお知らせ</span></a></li>
+  </ul></div>
+</div>
+"""
+
+_4406_IR_PAGE_HTML = """
+<div class="content_area"><ul class="ir_tab_list">
+  <li><a href="/app/upload/information/pdf/b7ee.pdf"><span class="day">2026-08-07</span>
+      <span class="text">天然高級アルコール事業からの撤退に関するお知らせ</span></a></li>
+  <li><a href="/app/upload/information/pdf/a17b.pdf"><span class="day">2026-08-07</span>
+      <span class="text">2027年３月期連結業績予想の修正に関するお知らせ</span></a></li>
+  <li><a href="/app/upload/information/pdf/7c4b.pdf"><span class="day">2026-08-07</span>
+      <span class="text">持分法適用関連会社の異動（株式譲渡及び合弁解消）並びに特別損失の計上に関するお知らせ</span></a></li>
+  <li><a href="/app/upload/information/pdf/64d8.pdf"><span class="day">2026-08-07</span>
+      <span class="text">2027年３月期 第１四半期決算短信〔日本基準〕（連結）</span></a></li>
+  <li><a href="/app/upload/information/pdf/3228.pdf"><span class="day">2026-06-24</span>
+      <span class="text">役員人事に関するお知らせ</span></a></li>
+</ul></div>
+"""
+
+# 4406 2027年3月期 第1四半期決算短信 の四半期連結貸借対照表(原文の抜粋)
+_4406_Q1_PAGES = [
+    "2027年３月期  第１四半期決算短信〔日本基準〕（連結）\n2026年８月７日\n"
+    "上場会社名 新日本理化株式会社 上場取引所  東\n"
+    "（１）連結経営成績（累計）（2026年４月１日～2026年６月30日）\n",
+    "（単位：百万円）\n前連結会計年度\n(2026年３月31日)\n当第１四半期連結会計期間\n(2026年６月30日)\n"
+    "資産の部\n流動資産\n現金及び預金 5,685 4,311\n受取手形及び売掛金 7,453 8,854\n"
+    "電子記録債権 1,164 1,179\n商品及び製品 3,257 3,718\n流動資産合計 20,084 21,115\n"
+    "投資有価証券 10,503 10,517\n資産合計 40,345 41,321\n",
+    "（単位：百万円）\n前連結会計年度\n(2026年３月31日)\n当第１四半期連結会計期間\n(2026年６月30日)\n"
+    "負債の部\n流動負債\n支払手形及び買掛金 5,109 5,914\n短期借入金 260 270\n"
+    "１年内返済予定の長期借入金 2,063 2,063\n流動負債合計 10,292 10,806\n固定負債\n"
+    "長期借入金 4,946 4,480\n固定負債合計 9,065 8,539\n非支配株主持分 1,244 1,251\n"
+    "純資産合計 20,987 21,975\n",
+]
+
+_4406_DOCUMENT_PAGES = {
+    "64d8.pdf": _4406_Q1_PAGES,
+    "a17b.pdf": [
+        "2026 年８月７日 各 位 会 社 名 新日本理化株式会社 "
+        "2027 年３月期連結業績予想の修正に関するお知らせ 当社は、2026 年５月14 日に公表いたしました"
+        "2027 年３月期連結業績予想を、下記のとおり修正しましたので、お知らせいたします。"
+    ],
+    "7c4b.pdf": [
+        "2026 年８月７日 各 位 会 社 名 新日本理化株式会社 持分法適用関連会社の異動"
+        "（株式譲渡及び合弁解消）並びに特別損失の計上に関するお知らせ ５．特別損失の計上見込み"
+        "および業績への影響 本株式譲渡および合弁解消に関連して、2027 年３月期第２四半期決算において、"
+        "関係会社株式 評価損として個別決算で 651 百万円、連結決算で約 800 百万円を特別損失に計上する見込みです。"
+    ],
+    "b7ee.pdf": [
+        "2026 年８月７日 各 位 会 社 名 新日本理化株式会社 天然高級アルコール事業からの撤退に関するお知らせ "
+        "当社は、本日開催の取締役会において、天然高級アルコール事業から撤退することを決議いたしました。"
+        "本事業撤退に伴う費用等（一部設備の減損等）の発生見込みによる業績への影響につきましては、現在精査中です。"
+    ],
+    "3228.pdf": ["2026年６月24日 各位 役員人事に関するお知らせ"],
+}
+
+
+def _fake_document_pages(url, referer=None):
+    for suffix, pages in _4406_DOCUMENT_PAGES.items():
+        if url.endswith(suffix):
+            return pages
+    return []
+
+
+def _fetch_4406_ir_status():
+    from unittest import mock
+
+    base = "https://www.nj-chem.co.jp/app/ir"
+    report_date = date(2026, 10, 4)
+    ir_items = ir_disclosures.parse_ir_index(_4406_IR_PAGE_HTML, base, report_date)
+    top_items = ir_disclosures.parse_ir_index(
+        _4406_TOP_PAGE_HTML, "https://www.nj-chem.co.jp/", report_date
+    )
+    discovered = {
+        "url": base, "items": ir_items, "source_name": "企業公式IR",
+        "all_items": sorted(
+            ir_items + top_items, key=lambda r: (r["date"], r["title"]), reverse=True
+        ),
+    }
+    with mock.patch.object(ir_disclosures, "fetch_recent_tdnet_disclosures", return_value=None), \
+         mock.patch.object(ir_disclosures, "discover_official_ir_index", return_value=discovered), \
+         mock.patch.object(ir_disclosures, "_document_pages", side_effect=_fake_document_pages):
+        return ir_disclosures.fetch_latest_ir_disclosures(
+            "4406", corporate_url="https://www.nj-chem.co.jp/", report_date=report_date,
+        )
+
+
+class TestFix1NetCashSignAndLabel(unittest.TestCase):
+    """修正1: 見出しは状態ラベル＋絶対値、計算式の行は符号付きの値を残す。"""
+
+    def test_net_debt_is_shown_as_positive_amount_with_net_debt_label(self):
+        result = valuation.compute_net_cash(
+            sample_latest(), sample_manual(cash_and_deposits=5685.0, interest_bearing_debt=7269.0)
+        )
+        self.assertEqual(result["display_text"], "ネットデット 1,584")
+        self.assertEqual(result["label"], "ネットデット")
+        self.assertAlmostEqual(result["display_value"], 1584.0)
+        # 計算式の行には元の符号付きの値を残す
+        self.assertAlmostEqual(result["narrow"], -1584.0)
+
+    def test_net_cash_is_shown_with_net_cash_label(self):
+        result = valuation.compute_net_cash(
+            sample_latest(), sample_manual(cash_and_deposits=9000.0, interest_bearing_debt=7269.0)
+        )
+        self.assertEqual(result["display_text"], "ネットキャッシュ 1,731")
+        self.assertAlmostEqual(result["narrow"], 1731.0)
+
+    def test_kpi_card_uses_absolute_value_and_formula_keeps_sign(self):
+        template = (Path(__file__).resolve().parent.parent / "report_app/templates/report_template.html").read_text(encoding="utf-8")
+        card = template.split('{{ net_cash.label or "ネットキャッシュ" }}', 1)[1][:300]
+        self.assertIn("net_cash.display_value", card)
+        self.assertIn('＝ 狭義ネットキャッシュ</td><td>{{ "{:,.0f}".format(net_cash.narrow) }}', template)
+
+    def test_missing_inputs_are_not_estimated(self):
+        result = valuation.compute_net_cash(sample_latest(), sample_manual(interest_bearing_debt=None))
+        self.assertFalse(result["available"])
+        self.assertIsNone(result["display_text"])
+
+
+class TestFix2DisclosureDates(unittest.TestCase):
+    """修正2: 発表日はIR一覧の日付または資料本文冒頭の日付を使う。"""
+
+    def test_leading_date_in_link_text_is_used_as_release_date(self):
+        rows = ir_disclosures.parse_ir_index(
+            _4406_TOP_PAGE_HTML, "https://www.nj-chem.co.jp/", date(2026, 10, 4)
+        )
+        by_title = {row["title"]: row["date"] for row in rows}
+        self.assertEqual(by_title["2026-08-07 IR 2027年３月期 第１四半期決算短信〔日本基準〕（連結）"], "2026-08-07")
+        self.assertEqual(by_title["2026-08-07 IR 2027年３月期連結業績予想の修正に関するお知らせ"], "2026-08-07")
+        # 同じ一覧の別項目の日付(2026-08-07)を付与しない
+        self.assertEqual(by_title["2026-06-24 IR 役員人事に関するお知らせ"], "2026-06-24")
+
+    def test_sibling_link_dates_are_not_borrowed(self):
+        html = """
+        <div><div>
+          <p><a href="/new.pdf">2026-10-01 新しい開示</a></p>
+          <p><a href="/old.pdf">決算短信</a></p>
+        </div></div>
+        """
+        rows = ir_disclosures.parse_ir_index(html, "https://example.com/ir/", date(2026, 10, 4))
+        self.assertEqual([row["title"] for row in rows], ["2026-10-01 新しい開示"])
+
+    def test_document_head_date_ignores_fiscal_period_range(self):
+        self.assertEqual(ir_disclosures.document_head_date(_4406_Q1_PAGES), date(2026, 8, 7))
+        self.assertIsNone(ir_disclosures.document_head_date(
+            ["第1四半期（2026年４月１日～2026年６月30日）の業績"]
+        ))
+        self.assertEqual(ir_disclosures.document_head_date(["令和8年8月7日 各位"]), date(2026, 8, 7))
+
+    def test_4406_earnings_and_forecast_revision_are_dated_2026_08_07(self):
+        status = _fetch_4406_ir_status()
+        self.assertEqual(status["latest_date"], "2026-08-07")
+        self.assertEqual(status["latest_earnings_original"]["date"], "2026-08-07")
+        self.assertEqual(status["latest_earnings"]["date"], "2026-08-07")
+        self.assertEqual(status["latest_forecast_revision"]["date"], "2026-08-07")
+        self.assertEqual(status["warnings"], [])
+
+    def test_list_and_body_date_mismatch_is_warned_and_body_date_is_used(self):
+        from unittest import mock
+
+        items = [{"date": "2026-10-01", "title": "第1四半期決算短信", "url": "https://x/64d8.pdf"}]
+        source = {"url": "https://x/ir", "items": items, "source_name": "企業公式IR"}
+        with mock.patch.object(ir_disclosures, "fetch_recent_tdnet_disclosures", return_value=None), \
+             mock.patch.object(ir_disclosures, "discover_official_ir_index", return_value=source), \
+             mock.patch.object(ir_disclosures, "_document_pages", side_effect=_fake_document_pages):
+            status = ir_disclosures.fetch_latest_ir_disclosures(
+                "4406", corporate_url="https://x/", report_date=date(2026, 10, 4)
+            )
+        self.assertEqual(status["latest_earnings_original"]["date"], "2026-08-07")
+        self.assertEqual(status["latest_earnings_original"]["list_date"], "2026-10-01")
+        self.assertTrue(any("食い違う" in w for w in status["warnings"]))
+
+    def test_document_newer_than_latest_listed_disclosure_is_warned(self):
+        from unittest import mock
+
+        latest = [{"date": "2026-08-07", "title": "役員人事", "url": "https://x/3228.pdf"}]
+        source = {
+            "url": "https://x/ir", "items": latest, "source_name": "企業公式IR",
+            "all_items": latest + [{"date": "2026-10-01", "title": "第1四半期決算短信", "url": "https://x/none.pdf"}],
+        }
+        with mock.patch.object(ir_disclosures, "fetch_recent_tdnet_disclosures", return_value=None), \
+             mock.patch.object(ir_disclosures, "discover_official_ir_index", return_value=source), \
+             mock.patch.object(ir_disclosures, "_document_pages", side_effect=_fake_document_pages):
+            status = ir_disclosures.fetch_latest_ir_disclosures(
+                "4406", corporate_url="https://x/", report_date=date(2026, 10, 4)
+            )
+        self.assertTrue(any("IR一覧の最新開示" in w for w in status["warnings"]))
+
+
+class TestFix3OneOffFactorsAcrossChapters(unittest.TestCase):
+    """修正3: 12章の一時要因判定に、最新決算短信と同時期の適時開示を含める。"""
+
+    def signal(self, name, direction):
+        return {"name": name, "direction": direction, "basis": "実績"}
+
+    def test_4406_one_off_factors_include_same_day_disclosures(self):
+        status = _fetch_4406_ir_status()
+        factors = classifier.detect_one_off_factors(
+            status["risk_events"], status["latest_earnings_original"]["date"]
+        )
+        summary_result = classifier.summarize_cycle_signals(
+            [self.signal("直近四半期(前年同期比)", "改善")], pbr=0.44,
+            risk_events=status["risk_events"], one_off_factors=factors,
+        )
+        self.assertEqual(
+            summary_result["temporary_display"],
+            "あり（特別損失 約800百万円、天然高級アルコール事業撤退）",
+        )
+        self.assertIn("一時要因あり（持続性は要確認）", summary_result["label"])
+
+    def test_disclosures_outside_window_are_not_counted(self):
+        events = [{"title": "特別損失の計上に関するお知らせ", "date": "2026-06-01", "amount_text": "100百万円"}]
+        self.assertEqual(classifier.detect_one_off_factors(events, "2026-08-07"), [])
+
+    def test_undated_annual_report_events_are_not_counted(self):
+        events = [{"text": "事業撤退や拠点集約", "keywords": ["撤退"], "section": "対処すべき課題"}]
+        self.assertEqual(classifier.detect_one_off_factors(events, "2026-08-07"), [])
+
+    def test_forecast_revision_alone_is_not_a_one_off_factor(self):
+        events = [{"title": "2027年３月期連結業績予想の修正に関するお知らせ", "date": "2026-08-07"}]
+        self.assertEqual(classifier.detect_one_off_factors(events, "2026-08-07"), [])
+
+    def test_no_factor_keeps_undetected(self):
+        result = classifier.summarize_cycle_signals([self.signal("直近四半期(前年同期比)", "改善")])
+        self.assertEqual(result["temporary_display"], "未検出")
+        self.assertNotIn("一時要因あり", result["label"])
+
+
+class TestImprovement4CashflowContinuity(unittest.TestCase):
+    """改善4: 期首残高+3CFと期末残高の差を年度ごとに確認する。"""
+
+    CASHFLOW_4406 = [
+        {"period": "2024.03", "operating_cf": 3578.0, "investing_cf": -60.0, "financing_cf": -2596.0, "cash_balance": 3695.0},
+        {"period": "2025.03", "operating_cf": -224.0, "investing_cf": -174.0, "financing_cf": -513.0, "cash_balance": 2780.0},
+        {"period": "2026.03", "operating_cf": 1643.0, "investing_cf": 501.0, "financing_cf": -64.0, "cash_balance": 5532.0},
+    ]
+
+    def test_4406_fy26_gap_is_warned_and_fy25_is_not(self):
+        rows = {row["period"]: row for row in metrics.check_cashflow_continuity(self.CASHFLOW_4406)}
+        self.assertAlmostEqual(rows["2026.03"]["gap"], 672.0)
+        self.assertIn("キャッシュフローの合計と期末残高に差あり", rows["2026.03"]["warning"])
+        self.assertIn("差額+672", rows["2026.03"]["warning"])
+        self.assertAlmostEqual(rows["2025.03"]["gap"], -4.0)
+        self.assertIsNone(rows["2025.03"]["warning"])
+
+    def test_first_year_without_opening_balance_is_not_estimated(self):
+        rows = metrics.check_cashflow_continuity(self.CASHFLOW_4406)
+        self.assertIsNone(rows[0]["gap"])
+        self.assertIsNone(rows[0]["warning"])
+
+    def test_ratio_threshold_applies_to_small_balances(self):
+        rows = metrics.check_cashflow_continuity([
+            {"period": "2025.03", "operating_cf": 0.0, "investing_cf": 0.0, "financing_cf": 0.0, "cash_balance": 1000.0},
+            {"period": "2026.03", "operating_cf": 0.0, "investing_cf": 0.0, "financing_cf": 0.0, "cash_balance": 1060.0},
+        ])
+        self.assertIsNotNone(rows[1]["warning"])  # 60 は100未満だが期末残高の5%以上
+
+
+class TestImprovement5QuarterEndReference(unittest.TestCase):
+    """改善5: 年度末より新しい四半期短信がある場合、四半期末ベースの参考値を並べる。"""
+
+    def test_4406_quarter_balance_sheet_values(self):
+        balance = ir_disclosures.extract_quarterly_balance_sheet(_4406_Q1_PAGES)
+        self.assertEqual(balance["period_end"], "2026-06-30")
+        self.assertAlmostEqual(balance["cash_and_deposits"], 4311.0)
+        self.assertAlmostEqual(balance["interest_bearing_debt"], 6813.0)
+        self.assertEqual(
+            [item["label"] for item in balance["debt_items"]],
+            ["短期借入金", "1年内返済予定の長期借入金", "長期借入金"],
+        )
+
+    def test_4406_reference_net_debt_does_not_overwrite_year_end(self):
+        manual = sample_manual()
+        year_end = valuation.compute_net_cash(sample_latest(), manual)
+        balance = ir_disclosures.extract_quarterly_balance_sheet(_4406_Q1_PAGES)
+        reference = valuation.compute_quarter_end_reference(
+            balance, "2026-03-31", manual, market_cap=8650.0, ebitda=1331.0,
+        )
+        self.assertTrue(reference["available"])
+        self.assertAlmostEqual(reference["debt"], 6813.0)
+        self.assertAlmostEqual(reference["cash"], 4311.0)
+        self.assertEqual(reference["display_text"], "ネットデット 2,502")
+        self.assertAlmostEqual(reference["narrow"], -2502.0)
+        self.assertEqual(reference["warnings"], [])
+        # 年度末ベースはそのまま
+        self.assertAlmostEqual(year_end["narrow"], -1584.0)
+        self.assertAlmostEqual(manual["cash_and_deposits"], 5685.0)
+
+    def test_annual_release_does_not_produce_reference(self):
+        balance = ir_disclosures.extract_quarterly_balance_sheet(_4406_Q1_PAGES)
+        balance["period_end"] = "2026-03-31"
+        reference = valuation.compute_quarter_end_reference(balance, "2026-03-31", sample_manual())
+        self.assertFalse(reference["available"])
+
+    def test_unknown_unit_is_not_estimated(self):
+        pages = [page.replace("（単位：百万円）", "") for page in _4406_Q1_PAGES]
+        self.assertIsNone(ir_disclosures.extract_quarterly_balance_sheet(pages))
+
+    def test_4406_ir_status_carries_quarter_balance(self):
+        status = _fetch_4406_ir_status()
+        self.assertAlmostEqual(status["quarter_balance"]["interest_bearing_debt"], 6813.0)
+        self.assertEqual(status["quarter_balance"]["source_date"], "2026-08-07")
+
+
+class TestImprovement6QualitativeClassification(unittest.TestCase):
+    """改善6: 景気全般の文はマクロ環境、文中の製品名は製品・用途列へ。"""
+
+    SOURCE = {"title": "第1四半期決算短信", "date": "2026-08-07", "url": "x"}
+
+    def test_domestic_economy_sentence_is_macro_not_demand(self):
+        rows = business_signals.extract_business_signals(
+            "わが国経済におきましては、インバウンド需要の恩恵等により、個人消費を中心に緩やかな回復基調を辿りました。",
+            self.SOURCE,
+        )
+        self.assertEqual(rows[0]["category"], "マクロ環境")
+        self.assertNotIn("受注・需要", rows[0]["category"])
+
+    def test_world_economy_sentence_is_macro(self):
+        rows = business_signals.extract_business_signals(
+            "世界経済は、各国の需要の減速により先行き不透明な状況が続きました。", self.SOURCE,
+        )
+        self.assertEqual(rows[0]["category"], "マクロ環境")
+
+    def test_product_name_in_sentence_fills_product_column(self):
+        cases = {
+            "主に床材や壁紙、電線被覆材などの建築部材に使用される汎用可塑剤は、海外からの廉価品流入の影響を受け、販売数量は前年同期を下回りました。": "汎用可塑剤",
+            "高耐熱・高耐候といった機能性可塑剤につきましては、国内外の需要がともに堅調に推移いたしました。": "機能性可塑剤",
+            "トイレタリー向け界面活性剤におきましては、高機能原料の需要が堅調に推移いたしました。": "トイレタリー向け界面活性剤",
+            "繊維油剤原料をはじめとする工業向け天然高級アルコールにおきましては、製品価格の改定、及び新規顧客の開拓が奏功したことから、数量、売上高ともに前年同期を上回りました。": "工業向け天然高級アルコール",
+        }
+        for text, expected in cases.items():
+            with self.subTest(expected=expected):
+                rows = business_signals.extract_business_signals(text, self.SOURCE)
+                self.assertEqual(rows[0]["product"], expected)
+                self.assertNotEqual(rows[0]["product"], "全社・複数製品")
+
+    def test_continuation_sentence_is_tied_to_previous_product(self):
+        rows = business_signals.extract_business_signals(
+            "主に建築部材に使用される汎用可塑剤は、販売数量は前年同期を下回りました。"
+            "しかしながら、適正な製品価格の維持・改定に努めた結果、売上高は前年同期を上回りました。",
+            self.SOURCE,
+        )
+        self.assertEqual(rows[1]["product"], "汎用可塑剤（前文の続き）")
+
+    def test_raw_material_is_not_treated_as_product(self):
+        rows = business_signals.extract_business_signals(
+            "原材料価格の上昇に対しても、適正な販売価格への転嫁を機動的に進めました。", self.SOURCE,
+        )
+        self.assertEqual(rows[0]["product"], "全社・複数製品")
 
 
 if __name__ == "__main__":

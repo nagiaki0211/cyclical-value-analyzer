@@ -724,3 +724,46 @@ def compute_quarterly_analysis(
 
         result.append(enriched)
     return result
+
+
+CASHFLOW_GAP_RATIO = 0.05
+CASHFLOW_GAP_AMOUNT = 100.0
+
+
+def check_cashflow_continuity(cashflow: list[dict]) -> list[dict]:
+    """
+    期首の現金等残高 + 営業CF + 投資CF + 財務CF と期末残高の差を年度ごとに計算する。
+
+    現金等残高は為替換算差額・連結範囲の変更でも動くため、差が出ること自体は
+    異常ではない。ただし差が大きい場合はデータ取得誤りの可能性もあるため、
+    |差| が期末残高の5%以上、または100百万円以上のときに警告する。
+    前年の残高やCFが欠ける年度は推定せず「算出不可」(gap=None)とする。
+    """
+    rows = sorted(
+        (row for row in cashflow or [] if row.get("period")),
+        key=lambda row: row["period"],
+    )
+    results = []
+    for index, row in enumerate(rows):
+        opening = rows[index - 1].get("cash_balance") if index > 0 else None
+        closing = row.get("cash_balance")
+        flows = [row.get("operating_cf"), row.get("investing_cf"), row.get("financing_cf")]
+        gap = None
+        warning = None
+        if opening is not None and closing is not None and all(v is not None for v in flows):
+            gap = closing - (opening + sum(flows))
+            if abs(gap) >= CASHFLOW_GAP_AMOUNT or (
+                closing and abs(gap) >= abs(closing) * CASHFLOW_GAP_RATIO
+            ):
+                warning = (
+                    f"キャッシュフローの合計と期末残高に差あり（{row['period']}期 差額{gap:+,.0f}。"
+                    "為替換算差額・連結範囲の変更・データ取得誤りの可能性）"
+                )
+        results.append({
+            "period": row["period"],
+            "opening": opening,
+            "closing": closing,
+            "gap": gap,
+            "warning": warning,
+        })
+    return results

@@ -530,6 +530,26 @@ def compute_dcf_taachan(latest: dict, manual: dict, liquidation_value: float | N
     }
 
 
+def net_cash_display(narrow: float | None) -> dict:
+    """
+    ネットキャッシュ/ネットデットの見出し表示を作る。
+
+    「ネットデット -1,584」のようにマイナス記号を付けると、借入超過の
+    額なのか、ネットデットがマイナス(=ネットキャッシュ)なのかが読み取れない。
+    見出しでは状態をラベルで示し、金額は絶対値で表示する。符号付きの値は
+    計算式の行(narrow)にそのまま残す。
+    """
+    if narrow is None:
+        return {"label": None, "display_value": None, "display_text": None}
+    label = "ネットキャッシュ" if narrow >= 0 else "ネットデット"
+    display_value = abs(narrow)
+    return {
+        "label": label,
+        "display_value": display_value,
+        "display_text": f"{label} {display_value:,.0f}",
+    }
+
+
 def compute_net_cash(latest: dict, manual: dict) -> dict:
     """
     ネットキャッシュ(手元資金 − 有利子負債)。マイナスの場合はネットデット。
@@ -545,7 +565,7 @@ def compute_net_cash(latest: dict, manual: dict) -> dict:
     operating_cf = latest.get("operating_cf")
 
     if cash is None or securities is None or debt is None:
-        return {"available": False, "narrow": None, "adjusted": None, "label": None, "years": None}
+        return {"available": False, "narrow": None, "adjusted": None, "years": None, **net_cash_display(None)}
 
     narrow = cash + securities - debt
     adjusted = narrow + investment_securities if investment_securities is not None else None
@@ -558,7 +578,7 @@ def compute_net_cash(latest: dict, manual: dict) -> dict:
         "available": True,
         "narrow": narrow,
         "adjusted": adjusted,
-        "label": "ネットキャッシュ" if narrow >= 0 else "ネットデット",
+        **net_cash_display(narrow),
         "cash": cash,
         "securities": securities,
         "investment_securities": investment_securities,
@@ -566,4 +586,93 @@ def compute_net_cash(latest: dict, manual: dict) -> dict:
         "operating_cf": operating_cf,
         "years": years,
         "depletion_applicable": operating_cf is not None and operating_cf < 0,
+    }
+
+
+def compute_quarter_end_reference(
+    quarter_balance: dict | None,
+    fiscal_year_end: str | None,
+    annual_manual: dict,
+    market_cap: float | None = None,
+    ebitda: float | None = None,
+) -> dict:
+    """
+    年度末より新しい四半期決算短信がある場合の「参考：直近四半期末ベース」。
+
+    EV/EBITDA・ネットキャッシュ・当座比率の本表は年度末(有価証券報告書)の
+    貸借対照表で計算しており、ここでは上書きしない。四半期末の現金・借入金を
+    並べて示し、時点ずれを読み手が確認できるようにする。取得できない科目は
+    推定せず None(=未取得)とする。
+    """
+    unavailable = {"available": False, "reason": None}
+    if not quarter_balance:
+        unavailable["reason"] = "年度末より新しい四半期決算短信の貸借対照表を取得できませんでした"
+        return unavailable
+    period_end = quarter_balance.get("period_end")
+    if not period_end:
+        unavailable["reason"] = "四半期決算短信の貸借対照表の基準日を特定できませんでした"
+        return unavailable
+    if fiscal_year_end and period_end <= fiscal_year_end:
+        unavailable["reason"] = "年度末より新しい四半期決算短信はありません"
+        return unavailable
+
+    cash = quarter_balance.get("cash_and_deposits")
+    current_liabilities = quarter_balance.get("current_liabilities")
+    if cash is None or current_liabilities is None:
+        unavailable["reason"] = "四半期末の現金及び預金・流動負債合計を取得できませんでした"
+        return unavailable
+
+    # 貸借対照表を読めている(流動負債合計まで取得できた)前提で、別掲の
+    # 無い有価証券・借入金は残高なしとして扱う(資料に記載が無いことの反映)。
+    securities_listed = quarter_balance.get("securities") is not None
+    securities = quarter_balance.get("securities") or 0.0
+    debt = quarter_balance.get("interest_bearing_debt") or 0.0
+    narrow = cash + securities - debt
+
+    noncontrolling = quarter_balance.get("noncontrolling_interests")
+    ev = None
+    if market_cap is not None and noncontrolling is not None:
+        ev = market_cap + debt + noncontrolling - cash - securities
+    ev_ebitda = ev / ebitda if ev is not None and ebitda not in (None, 0) else None
+
+    receivables = quarter_balance.get("receivables")
+    quick_ratio = None
+    if receivables is not None and current_liabilities:
+        quick_assets = (
+            cash + securities + receivables
+            + (quarter_balance.get("electronically_recorded_receivables") or 0.0)
+        )
+        quick_ratio = quick_assets / current_liabilities * 100
+
+    warnings = []
+    prior_cash = (quarter_balance.get("prior") or {}).get("cash_and_deposits")
+    annual_cash = annual_manual.get("cash_and_deposits")
+    if prior_cash is not None and annual_cash is not None and abs(prior_cash - annual_cash) >= 1:
+        warnings.append(
+            f"短信の前期末列の現金及び預金（{prior_cash:,.0f}）が年度データ（{annual_cash:,.0f}）と"
+            "一致しません。取得資料を原文で確認してください"
+        )
+
+    return {
+        "available": True,
+        "period_end": period_end,
+        "source_title": quarter_balance.get("source_title"),
+        "source_date": quarter_balance.get("source_date"),
+        "source_url": quarter_balance.get("source_url"),
+        "cash": cash,
+        "securities": securities,
+        "securities_listed": securities_listed,
+        "debt": debt,
+        "debt_items": quarter_balance.get("debt_items") or [],
+        "narrow": narrow,
+        **net_cash_display(narrow),
+        "noncontrolling_interests": noncontrolling,
+        "ev": ev,
+        "ebitda": ebitda,
+        "ev_ebitda": ev_ebitda,
+        "receivables": receivables,
+        "electronically_recorded_receivables": quarter_balance.get("electronically_recorded_receivables"),
+        "current_liabilities": current_liabilities,
+        "quick_ratio": quick_ratio,
+        "warnings": warnings,
     }
