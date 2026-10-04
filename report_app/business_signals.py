@@ -9,11 +9,19 @@ from datetime import date
 PRICE_KEYWORDS = (
     "価格改定", "価格是正", "価格転嫁", "販売価格への転嫁",
     "販売価格の適正化", "適正な価格対応", "製品価格の維持・改定",
+    "製品価格の改定", "製品価格改定", "値上げ", "転嫁",
 )
 DEMAND_KEYWORDS = (
     "受注", "需要", "出荷数量", "販売数量", "物件獲得", "新規顧客",
 )
-TEMPORARY_KEYWORDS = ("先入れ需要", "前倒し", "駆け込み需要", "一時的な増加")
+TEMPORARY_KEYWORDS = (
+    "一時的", "一過性", "先入れ需要", "先行需要", "前倒し", "駆け込み",
+    "在庫積み増し", "反動",
+)
+CONTEXT_KEYWORDS = (
+    "原材料", "供給不安", "供給懸念", "供給への懸念", "調達・供給",
+    "補助金", "売却益",
+)
 
 _DIRECTION_PATTERNS = (
     (r"大幅に上回", "大幅増加"),
@@ -163,6 +171,8 @@ def extract_business_signals(text: str, source: dict) -> list[dict]:
             categories.append("価格転嫁")
         if any(keyword in sentence for keyword in DEMAND_KEYWORDS):
             categories.append("受注・需要")
+        if not categories and any(keyword in sentence for keyword in CONTEXT_KEYWORDS):
+            categories.append("外部要因・一時要因")
         for category in categories:
             product = _product_name(sentence)
             if product == "全社・複数製品" and category == "価格転嫁" and document_target:
@@ -192,6 +202,7 @@ def extract_business_signals(text: str, source: dict) -> list[dict]:
                 "source_date": source.get("date"),
                 "source_url": source.get("url"),
                 "source_name": source.get("source_name", "企業公式IR・ニュース"),
+                "source_page": source.get("page"),
                 "confidence": "A: 数値を会社資料で確認" if rate or transfer_gap else "B: 会社の定性説明",
             })
             if len(signals) >= 24:

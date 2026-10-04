@@ -188,6 +188,17 @@ def _first_available_local_tag(
     return None
 
 
+def _member_fact(
+    facts: dict, prefix: str, tag: str, context_prefix: str, member: str,
+) -> float | None:
+    """ディメンション付きファクトから指定memberの値を取得する。"""
+    values = facts.get(f"{prefix}:{tag}", {})
+    for context, value in values.items():
+        if context.startswith(context_prefix) and member in context and "NonConsolidatedMember" not in context:
+            return value
+    return None
+
+
 # フィールド名 -> (会計基準プレフィックス, タグ名) の候補リスト。
 # JGAAP(jppfs_cor)・IFRS(jpigp_cor)の順で試す。
 FIELD_TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
@@ -196,6 +207,10 @@ FIELD_TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
     "current_liabilities": [("jppfs_cor", "CurrentLiabilities"), ("jpigp_cor", "TotalCurrentLiabilitiesIFRS")],
     "fixed_liabilities": [("jppfs_cor", "NoncurrentLiabilities"), ("jpigp_cor", "NonCurrentLabilitiesIFRS")],
     "total_liabilities": [("jppfs_cor", "Liabilities"), ("jpigp_cor", "LiabilitiesIFRS")],
+    "noncontrolling_interests": [
+        ("jppfs_cor", "NonControllingInterests"),
+        ("jpigp_cor", "NonControllingInterestsIFRS"),
+    ],
     "tangible_fixed_assets": [("jppfs_cor", "PropertyPlantAndEquipment"), ("jpigp_cor", "PropertyPlantAndEquipmentIFRS")],
     "intangible_fixed_assets": [("jppfs_cor", "IntangibleAssets"), ("jpigp_cor", "IntangibleAssetsIFRS")],
     "investments_other": [("jppfs_cor", "InvestmentsAndOtherAssets"), ("jpigp_cor", "InvestmentsAccountedForUsingEquityMethodIFRS")],
@@ -359,7 +374,8 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     result["capital_expenditure_total"] = _first_available(
         facts,
         [("jpigp_cor", "CapitalExpendituresIFRS"),
-         ("jppfs_cor", "CapitalExpenditures")],
+         ("jppfs_cor", "CapitalExpenditures"),
+         ("jppfs_cor", "PurchaseOfNoncurrentAssetsInvCF")],
         context="CurrentYearDuration",
     )
     result["income_taxes"] = _first_available(
@@ -387,11 +403,38 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
     )
 
     # 自己株式の取得額(株主還元姿勢の判定に使う。キャッシュフロー計算書上は支出=マイナス)。
-    result["treasury_stock_purchase"] = _first_available(
+    treasury_purchase = _first_available(
         facts,
         [("jppfs_cor", "PurchaseOfTreasuryStockFinCF"), ("jpigp_cor", "PurchaseOfTreasuryStockFinCFIFRS")],
         context="CurrentYearDuration",
     )
+    result["treasury_stock_purchase"] = (
+        abs(treasury_purchase) if treasury_purchase is not None else None
+    )
+    treasury_retirement = _member_fact(
+        facts, "jppfs_cor", "RetirementOfTreasuryStock",
+        "CurrentYearDuration", "TreasuryStockMember",
+    )
+    result["treasury_stock_retirement"] = (
+        abs(treasury_retirement) if treasury_retirement is not None else None
+    )
+    retained_transfer = _member_fact(
+        facts, "jppfs_cor", "TransferToCapitalSurplusFromRetainedEarnings",
+        "CurrentYearDuration", "RetainedEarningsMember",
+    )
+    result["retained_earnings_transfer"] = (
+        abs(retained_transfer) if retained_transfer is not None else None
+    )
+    result["retained_earnings_prev_year"] = _get_fact(
+        facts, "jppfs_cor", "RetainedEarnings", context="Prior1YearInstant"
+    )
+    result["retained_earnings_current_year"] = _get_fact(
+        facts, "jppfs_cor", "RetainedEarnings", context="CurrentYearInstant"
+    )
+    dividends = _get_fact(
+        facts, "jppfs_cor", "DividendsFromSurplus", context="CurrentYearDuration"
+    )
+    result["dividends_from_surplus"] = abs(dividends) if dividends is not None else None
 
     # 特別利益・特別損失(利益の質の判定で、一過性損益を除いた調整後利益に使う)。
     result["extraordinary_income"] = _get_fact(facts, "jppfs_cor", "ExtraordinaryIncome", context="CurrentYearDuration")
@@ -436,7 +479,6 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
         if result.get("securities") is None:
             result["securities"] = 0.0
             result["_securities_inferred_zero"] = True
-
     result.update(_extract_share_counts(facts))
     result["_capital_history"] = _extract_capital_history(facts)
 

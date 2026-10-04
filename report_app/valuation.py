@@ -56,7 +56,8 @@ ASSET_DOUBLE_COUNT_THRESHOLD = 1.02
 
 def compute_liquidation_value(manual: dict) -> dict:
     """
-    簡易修正純資産(清算価値の簡易版) = 掛け目適用後の資産 − 総負債。
+    簡易修正純資産(親会社株主持分の目安)
+      = 掛け目適用後の資産 − 総負債 − 非支配株主持分。
 
     実際の清算では退職給付の一括清算費用・設備撤去費用・清算手数料等が
     追加で発生するが、これらは開示されないため反映していない。したがって
@@ -70,13 +71,18 @@ def compute_liquidation_value(manual: dict) -> dict:
         manual["electronically_recorded_receivables"] = 0.0
     missing = [k for k in ASSET_HAIRCUTS if manual.get(k) is None]
     total_liabilities = manual.get("total_liabilities")
+    noncontrolling_interests = manual.get("noncontrolling_interests")
 
-    if missing or total_liabilities is None:
+    if missing or total_liabilities is None or noncontrolling_interests is None:
         return {
             "value": None,
             "adjusted_assets": None,
             "rows": [],
-            "missing_fields": missing + (["total_liabilities"] if total_liabilities is None else []),
+            "missing_fields": (
+                missing
+                + (["total_liabilities"] if total_liabilities is None else [])
+                + (["noncontrolling_interests"] if noncontrolling_interests is None else [])
+            ),
             "low_coverage_warning": False,
             "double_count_warning": False,
             "unreflected_costs": UNREFLECTED_LIQUIDATION_COSTS,
@@ -106,11 +112,13 @@ def compute_liquidation_value(manual: dict) -> dict:
             double_count_warning = coverage > ASSET_DOUBLE_COUNT_THRESHOLD
 
     return {
-        "value": adjusted_assets - total_liabilities,
+        "value_before_noncontrolling": adjusted_assets - total_liabilities,
+        "value": adjusted_assets - total_liabilities - noncontrolling_interests,
         "adjusted_assets": adjusted_assets,
         "rows": rows,
         "raw_asset_total": raw_asset_total,
         "total_liabilities": total_liabilities,
+        "noncontrolling_interests": noncontrolling_interests,
         "missing_fields": [],
         "low_coverage_warning": low_coverage_warning,
         "double_count_warning": double_count_warning,
@@ -142,8 +150,10 @@ def _discounted_cash_flows(base_fcf: float, growth: float, wacc: float, years: i
     return flows
 
 
-def _run_dcf_scenario(scenario: dict, base_fcf: float, cash: float, debt: float,
-                      shares: float | None) -> dict:
+def _run_dcf_scenario(
+    scenario: dict, base_fcf: float, cash: float, debt: float,
+    shares: float | None, noncontrolling_interests: float = 0.0,
+) -> dict:
     """1シナリオ分のDCF。永久成長率がWACC以上の場合は算出不能として返す。"""
     wacc = scenario["wacc"]
     terminal_growth = scenario["terminal_growth"]
@@ -161,7 +171,7 @@ def _run_dcf_scenario(scenario: dict, base_fcf: float, cash: float, debt: float,
     pv_terminal = terminal_value / (1 + wacc) ** DCF_FORECAST_YEARS
 
     enterprise_value = pv_forecast + pv_terminal
-    equity_value = enterprise_value + cash - debt
+    equity_value = enterprise_value + cash - debt - noncontrolling_interests
 
     result.update(
         {
@@ -242,7 +252,7 @@ def _resolve_base_fcf(latest: dict, manual: dict, tax_rate: float) -> dict:
         }
     if operating_cf is not None and total_capex is not None:
         simple_definition = (
-            "簡易FCF = 営業CF - 設備投資"
+            "簡易FCF = 営業CF - 固定資産取得（有形・無形の合算開示）"
             if capex_total_reported is not None else SIMPLE_FCF_DEFINITION
         )
         return {
@@ -277,6 +287,7 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
     operating_cf = latest.get("operating_cf")
     cash = manual.get("cash_and_deposits")
     debt = manual.get("interest_bearing_debt")
+    noncontrolling_interests = manual.get("noncontrolling_interests")
 
     from report_app.advanced_metrics import resolve_effective_tax_rate
     tax = resolve_effective_tax_rate(manual)
@@ -305,6 +316,7 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
         )
     missing.extend(label for label, value in (
         ("現金及び預金", cash), ("有利子負債", debt),
+        ("非支配株主持分", noncontrolling_interests),
     ) if value is None)
     if missing:
         return {
@@ -324,6 +336,7 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
             "fcf_kind": fcf["kind"], "fcf_components": fcf["components"], "wacc_basis": wacc,
             "operating_cf": operating_cf,
             "cash": cash, "debt": debt,
+            "noncontrolling_interests": noncontrolling_interests,
             "scenarios": [], "warnings": ["基準FCFがマイナス(ターミナルバリューも成立しないため全シナリオ算出不可)"],
             "bear_case": None, "bull_case": None,
         }
@@ -335,7 +348,12 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
             item["wacc"] = wacc["value"]
         item["wacc_kind"] = wacc["kind"]
         scenario_inputs.append(item)
-    scenarios = [_run_dcf_scenario(s, base_fcf, cash, debt, shares_outstanding) for s in scenario_inputs]
+    scenarios = [
+        _run_dcf_scenario(
+            s, base_fcf, cash, debt, shares_outstanding, noncontrolling_interests
+        )
+        for s in scenario_inputs
+    ]
     by_key = {s["key"]: s for s in scenarios}
     values = [s.get("equity_value") for s in scenarios if s.get("equity_value") is not None]
     monotonic_ok = values == sorted(values)
@@ -355,11 +373,12 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
         "forecast_years": DCF_FORECAST_YEARS,
         "cash": cash,
         "debt": debt,
+        "noncontrolling_interests": noncontrolling_interests,
         "shares_outstanding": shares_outstanding,
         "scenarios": scenarios,
         "monotonic_ok": monotonic_ok,
         "warnings": warnings,
-        "sensitivity": _build_sensitivity(base_fcf, cash, debt),
+        "sensitivity": _build_sensitivity(base_fcf, cash, debt, noncontrolling_interests),
         # 項目2(収益力から見た割安性)の評価で使用する。
         "bear_case": by_key.get("bear", {}).get("equity_value"),
         "base_case": by_key.get("base", {}).get("equity_value"),
@@ -367,7 +386,9 @@ def compute_dcf(latest: dict, manual: dict, shares_outstanding: float | None = N
     }
 
 
-def _build_sensitivity(base_fcf: float, cash: float, debt: float) -> dict:
+def _build_sensitivity(
+    base_fcf: float, cash: float, debt: float, noncontrolling_interests: float,
+) -> dict:
     """WACC×永久成長率の感応度表(標準シナリオの成長率を前提とした株主価値)。"""
     base_growth = next(s["growth"] for s in DCF_SCENARIOS if s["key"] == "base")
     rows = []
@@ -375,7 +396,9 @@ def _build_sensitivity(base_fcf: float, cash: float, debt: float) -> dict:
         cells = []
         for terminal_growth in SENSITIVITY_TERMINAL_GROWTHS:
             scenario = {"wacc": wacc, "terminal_growth": terminal_growth, "growth": base_growth}
-            result = _run_dcf_scenario(scenario, base_fcf, cash, debt, None)
+            result = _run_dcf_scenario(
+                scenario, base_fcf, cash, debt, None, noncontrolling_interests
+            )
             cells.append(result.get("equity_value"))
         rows.append({"wacc": wacc, "cells": cells})
     return {"waccs": SENSITIVITY_WACCS, "terminal_growths": SENSITIVITY_TERMINAL_GROWTHS, "rows": rows}

@@ -329,6 +329,7 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
 
 def summarize_cycle_signals(
     signals: list[dict], pbr: float | None = None, risk_events: list[dict] | None = None,
+    business_signals: list[dict] | None = None,
 ) -> dict:
     """
     複数の判定材料から総合判断を作る。材料が矛盾する場合は
@@ -392,4 +393,24 @@ def summarize_cycle_signals(
     if has_business_change and sales_decline:
         detail += "。売上減は事業譲渡・撤退等による事業構成の変化である可能性があります"
 
-    return {"label": label, "detail": detail}
+    temporary_rows = [
+        row for row in (business_signals or []) if row.get("temporary")
+    ]
+    if temporary_rows:
+        if "持続性は未確認" in label:
+            label = label.replace(
+                "(持続性は未確認)", "(一時要因を含む・持続性は未確認)"
+            )
+        else:
+            label += "(一時要因を含む・持続性は未確認)"
+        detail += "。会社資料で一時的需要・前倒し等が確認され、足元の増益を持続的な回復とは断定できません"
+
+    return {
+        "label": label,
+        "detail": detail,
+        "temporary_factor": bool(temporary_rows),
+        "temporary_evidence": [
+            row.get("evidence") or row.get("source_title") or "会社資料の一時要因記載"
+            for row in temporary_rows[:3]
+        ],
+    }
