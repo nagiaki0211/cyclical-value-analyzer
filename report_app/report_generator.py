@@ -9,7 +9,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from report_app import ai_analysis_package, advanced_metrics, business_signals, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation
+from report_app import ai_analysis_package, advanced_metrics, business_signals, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation, valuation_comparison
 from report_app.edinet_config import get_edinet_api_key
 from report_app.manual_input import load_or_create_manual_data
 from report_app.svg_chart import bar_chart_svg
@@ -588,7 +588,11 @@ def generate_report(code: str) -> Path:
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=True)
     template = env.get_template("report_template.html")
     generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    price_comparison = valuation_comparison.build_comparison(
+        company_data, manual, latest_period, liquidation, dcf_taachan, dcf,
+    )
     html = template.render(
+        price_comparison=price_comparison,
         company=company_data,
         generated_at=generated_at,
         latest_period=latest_period,
