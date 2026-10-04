@@ -27,7 +27,7 @@ def sample_manual(**overrides) -> dict:
     """新日本理化(4406) 2026.03期の実データに基づくテスト用データ(単位: 百万円)。"""
     base = {
         "cash_and_deposits": 5685.0,
-        "securities": None,               # 流動資産の有価証券は無し
+        "securities": 0.0,                # 流動資産の有価証券は無し
         "investment_securities_noncurrent": 10503.0,
         "receivables": 7453.0,
         "electronically_recorded_receivables": 1164.0,
@@ -260,6 +260,18 @@ class TestDcf(unittest.TestCase):
             4884.0,
         )
 
+    def test_current_securities_are_added_to_dcf_cash(self):
+        without = valuation.compute_dcf(sample_latest(), sample_manual(securities=0.0), None)
+        with_securities = valuation.compute_dcf(
+            sample_latest(), sample_manual(securities=2644.0), None
+        )
+        self.assertAlmostEqual(with_securities["cash"] - without["cash"], 2644.0)
+        self.assertAlmostEqual(
+            with_securities["scenarios"][0]["equity_value"]
+            - without["scenarios"][0]["equity_value"],
+            2644.0,
+        )
+
     def test_enterprise_value_is_sum_of_present_values(self):
         for scenario in self.dcf["scenarios"]:
             self.assertAlmostEqual(
@@ -302,6 +314,7 @@ class TestValuationRatios(unittest.TestCase):
             operating_cf=latest["operating_cf"],
             interest_bearing_debt=manual["interest_bearing_debt"],
             cash_and_deposits=manual["cash_and_deposits"],
+            securities=manual["securities"],
             operating_income=latest["operating_income"],
             depreciation_amortization=manual["depreciation_amortization"],
             noncontrolling_interests=manual["noncontrolling_interests"],
@@ -317,7 +330,7 @@ class TestValuationRatios(unittest.TestCase):
         c = self.ratios["components"]
         self.assertAlmostEqual(
             self.ratios["ev"], c["market_cap"] + c["interest_bearing_debt"]
-            + c["noncontrolling_interests"] - c["cash_and_deposits"]
+            + c["noncontrolling_interests"] - c["cash_and_deposits"] - c["securities"]
         )
 
     def test_ebitda_is_reproducible_from_components(self):
@@ -338,6 +351,7 @@ class TestValuationRatios(unittest.TestCase):
             operating_cf=values["operating_cf"],
             interest_bearing_debt=values["interest_bearing_debt"],
             cash_and_deposits=values["cash_and_deposits"],
+            securities=values["securities"],
             operating_income=values["operating_income"],
             depreciation_amortization=values["depreciation_amortization"],
             noncontrolling_interests=4884.0,
@@ -718,6 +732,17 @@ class TestGrading(unittest.TestCase):
         self.assertGreater(graded["evaluated"], 0)
         self.assertLessEqual(graded["score_ratio"], 1.0)
 
+    def test_dividend_burden_prefers_cashflow_payment(self):
+        result = grading.grade_shareholder_return(
+            eps=200.0, dps=90.0,
+            manual=sample_manual(dividends_paid=2096.0),
+            merged={"2026.03": {"dps": 90.0}}, ordered_periods=["2026.03"],
+            free_cash_flow=5990.0,
+        )
+        self.assertAlmostEqual(result["total_dividend"], 2096.0)
+        self.assertAlmostEqual(result["dividend_burden"], 2096.0 / 5990.0 * 100)
+        self.assertIn("キャッシュフロー計算書", result["dividend_burden_basis"])
+
 
 class TestProfitQuality(unittest.TestCase):
     """14. 特別損益を含む場合に利益の質へ警告が出る"""
@@ -900,6 +925,12 @@ class TestNetCash(unittest.TestCase):
         result = valuation.compute_net_cash(sample_latest(), sample_manual())
         self.assertAlmostEqual(result["adjusted"], result["narrow"] + 10503.0)
 
+    def test_narrow_net_cash_includes_current_securities(self):
+        result = valuation.compute_net_cash(
+            sample_latest(), sample_manual(securities=2644.0)
+        )
+        self.assertAlmostEqual(result["narrow"], 5685.0 + 2644.0 - 7269.0)
+
 
 class TestInterestBearingDebtTags(unittest.TestCase):
     """有利子負債の構成科目(1年内返済予定の長期借入金の欠落を防ぐ)"""
@@ -931,6 +962,11 @@ class TestInterestBearingDebtTags(unittest.TestCase):
         facts = {"jpigp_cor:CapitalExpendituresIFRS": {"CurrentYearDuration": 6059779.0}}
         detail = edinet.extract_balance_sheet_detail(facts, None)
         self.assertEqual(detail["capital_expenditure_total"], 6059779.0)
+
+    def test_cash_dividends_paid_tag_is_resolved(self):
+        facts = {"jppfs_cor:CashDividendsPaidFinCF": {"CurrentYearDuration": -2096.0}}
+        detail = edinet.extract_balance_sheet_detail(facts, None)
+        self.assertEqual(detail["dividends_paid"], 2096.0)
 
 
 class TestGenericCompanyDiscovery(unittest.TestCase):
@@ -1095,6 +1131,44 @@ class TestBusinessSignalExtraction(unittest.TestCase):
         )
         self.assertTrue(rows[0]["temporary"])
 
+    def test_increase_and_decrease_in_same_sentence_is_mixed(self):
+        rows = business_signals.extract_business_signals(
+            "自動車分野は増加しましたが、非自動車分野では需要が減少しました。",
+            {"title": "決算短信", "date": "2026-07-31", "url": "x"},
+        )
+        self.assertEqual(rows[0]["direction"], "混在")
+
+    def test_product_uses_sentence_subject_not_only_quoted_brand(self):
+        rows = business_signals.extract_business_signals(
+            "食品容器用の発泡ポリスチレンシート「スチレンペーパー」を中心とした生活資材製品は、需要が増加しました。",
+            {"title": "決算短信", "date": "2026-07-31", "url": "x"},
+        )
+        self.assertEqual(rows[0]["product"], "生活資材製品（スチレンペーパー中心）")
+
+    def test_same_sentence_combines_demand_and_price_categories(self):
+        rows = business_signals.extract_business_signals(
+            "一時的な需要による販売の増加や製品価格の改定により、売上高は増加しました。",
+            {"title": "決算短信", "date": "2026-07-31", "url": "x"},
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["category"], "受注・需要／価格転嫁")
+
+    def test_mixed_direction_takes_priority_even_in_price_sentence(self):
+        rows = business_signals.extract_business_signals(
+            "製品価格の改定を進め、国内販売は増加しましたが海外販売は減少しました。",
+            {"title": "決算短信", "date": "2026-07-31", "url": "x"},
+        )
+        self.assertEqual(rows[0]["direction"], "混在")
+
+    def test_merge_combines_legacy_duplicate_categories(self):
+        base = {"product": "全社", "source_date": "2026-07-31", "source_url": "x", "evidence": "同じ文"}
+        merged = business_signals.merge_signals(
+            [{**base, "category": "受注・需要", "temporary": True}],
+            [{**base, "category": "価格転嫁", "temporary": True}],
+        )
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["category"], "受注・需要／価格転嫁")
+
     def test_numeric_disclosure_is_not_dropped_by_newer_qualitative_rows(self):
         qualitative = [
             {"category": "価格転嫁", "product": f"製品{i}",
@@ -1193,6 +1267,13 @@ class TestTaachanDcf(unittest.TestCase):
             self.result["cash_power_value"],
             self.result["net_cash"] + self.result["fcf"] * expected_factor,
         )
+
+    def test_cash_power_model_deducts_noncontrolling_interests(self):
+        result = valuation.compute_dcf_taachan(
+            sample_latest(), sample_manual(noncontrolling_interests=4884.0), 6525.0
+        )
+        expected = result["net_cash"] + result["fcf"] / 0.10 - 4884.0
+        self.assertAlmostEqual(result["cash_power_value"], expected)
 
     def test_liquidation_growth_model_matches_the_book_formula(self):
         expected_factor = sum(0.6 * (1.2 / 1.1) ** n for n in range(1, 6))

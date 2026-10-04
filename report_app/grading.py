@@ -163,12 +163,18 @@ def grade_shareholder_return(eps: float | None, dps: float | None, manual: dict,
 
     total_dividend = None
     dividend_burden = None
+    dividend_burden_basis = None
     shares = manual.get("shares_issued")
-    if dps is not None and shares:
+    dividends_paid = manual.get("dividends_paid")
+    if dividends_paid is not None:
+        total_dividend = abs(dividends_paid)
+        dividend_burden_basis = "キャッシュフロー計算書の配当金支払額"
+    elif dps is not None and shares:
         # 配当総額(百万円) = 1株配当(円) × 発行済株式数 ÷ 1,000,000
         total_dividend = dps * shares / 1e6
-        if free_cash_flow and free_cash_flow > 0:
-            dividend_burden = total_dividend / free_cash_flow * 100
+        dividend_burden_basis = "1株配当×発行済株式数による概算"
+    if total_dividend is not None and free_cash_flow and free_cash_flow > 0:
+        dividend_burden = total_dividend / free_cash_flow * 100
 
     buyback = manual.get("treasury_stock_purchase")
     notes = manual.get("shareholder_return_notes")
@@ -200,6 +206,8 @@ def grade_shareholder_return(eps: float | None, dps: float | None, manual: dict,
             "checks": checks,
             "consecutive_years": consecutive_years,
             "dividend_burden": dividend_burden,
+            "total_dividend": total_dividend,
+            "dividend_burden_basis": dividend_burden_basis,
             "notes": notes or f"判定材料が不足しています(判定できた項目: {len(evaluated)}/{len(checks)})",
         }
 
@@ -213,6 +221,7 @@ def grade_shareholder_return(eps: float | None, dps: float | None, manual: dict,
         "consecutive_years": consecutive_years,
         "total_dividend": total_dividend,
         "dividend_burden": dividend_burden,
+        "dividend_burden_basis": dividend_burden_basis,
         "buyback": buyback,
         "notes": notes,
     }

@@ -30,6 +30,8 @@ _DIRECTION_PATTERNS = (
     (r"大幅に下回", "大幅減少"),
     (r"下回|減少|低調|悪化", "減少・低下"),
 )
+_POSITIVE_DIRECTION_RE = re.compile(r"大幅に上回|上回|増加|好調|堅調|回復基調|獲得が進")
+_NEGATIVE_DIRECTION_RE = re.compile(r"大幅に下回|下回|減少|低調|悪化")
 _RATE_RE = re.compile(r"([0-9０-９]+(?:[.,．][0-9０-９]+)?)\s*(円\s*[／/]\s*(?:kg|ｋｇ)|[％%])")
 _EFFECTIVE_DATE_RE = re.compile(
     r"(20[0-9０-９]{2})年\s*([0-9０-９]{1,2})月\s*([0-9０-９]{1,2})日(?:以降)?(?:の)?出荷分"
@@ -72,6 +74,12 @@ def extract_order_disclosure(text: str) -> dict | None:
 
 
 def _product_name(sentence: str) -> str:
+    centered = re.search(
+        r"「([^」]{1,50})」を中心と(?:した|する)([^、。は]{2,32}?(?:製品|事業|分野|用途))",
+        sentence,
+    )
+    if centered:
+        return f"{centered.group(2).strip()}（{centered.group(1)}中心）"
     quoted = re.search(r"「([^」]{1,50})」", sentence)
     if quoted:
         return quoted.group(1)
@@ -92,6 +100,8 @@ def _product_name(sentence: str) -> str:
 
 
 def _direction(sentence: str) -> str:
+    if _POSITIVE_DIRECTION_RE.search(sentence) and _NEGATIVE_DIRECTION_RE.search(sentence):
+        return "混在"
     for pattern, label in _DIRECTION_PATTERNS:
         if re.search(pattern, sentence):
             return label
@@ -159,71 +169,91 @@ def extract_business_signals(text: str, source: dict) -> list[dict]:
     document_target = document_target_match.group(1).strip() if document_target_match else None
     document_effective_date = _effective_date(normalized)
     signals: list[dict] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[str] = set()
 
     for sentence in sentences:
         # PDFのページ境界で表と本文が連結された長大な文字列は、誤って
         # 製品名や割合を対応付ける危険があるため抽出対象にしない。
         if len(sentence) < 12 or len(sentence) > 480:
             continue
+        has_price = any(keyword in sentence for keyword in PRICE_KEYWORDS)
+        has_demand = any(keyword in sentence for keyword in DEMAND_KEYWORDS)
         categories = []
-        if any(keyword in sentence for keyword in PRICE_KEYWORDS):
-            categories.append("価格転嫁")
-        if any(keyword in sentence for keyword in DEMAND_KEYWORDS):
+        if has_demand:
             categories.append("受注・需要")
+        if has_price:
+            categories.append("価格転嫁")
         if not categories and any(keyword in sentence for keyword in CONTEXT_KEYWORDS):
             categories.append("外部要因・一時要因")
-        for category in categories:
-            product = _product_name(sentence)
-            if product == "全社・複数製品" and category == "価格転嫁" and document_target:
-                product = document_target
-            key = (category, product, sentence[:100])
-            if key in seen:
-                continue
-            seen.add(key)
-            rate = _rate(sentence) if category == "価格転嫁" else None
-            transfer_gap = _transfer_gap(sentence) if category == "価格転嫁" else None
-            effective_date = _effective_date(sentence) or (
-                document_effective_date if category == "価格転嫁" and document_target else None
-            )
-            signals.append({
-                "category": category,
-                "product": product,
-                "direction": (
-                    _price_status(sentence, rate, effective_date)
-                    if category == "価格転嫁" else _direction(sentence)
-                ),
-                "revision_amount": rate,
-                "transfer_gap": transfer_gap,
-                "effective_date": effective_date,
-                "temporary": any(keyword in sentence for keyword in TEMPORARY_KEYWORDS),
-                "evidence": sentence[:420],
-                "source_title": source.get("title"),
-                "source_date": source.get("date"),
-                "source_url": source.get("url"),
-                "source_name": source.get("source_name", "企業公式IR・ニュース"),
-                "source_page": source.get("page"),
-                "confidence": "A: 数値を会社資料で確認" if rate or transfer_gap else "B: 会社の定性説明",
-            })
-            if len(signals) >= 24:
-                return signals
+        if not categories:
+            continue
+        evidence = sentence[:420]
+        if evidence in seen:
+            continue
+        seen.add(evidence)
+        category = "／".join(categories)
+        product = _product_name(sentence)
+        if product == "全社・複数製品" and has_price and document_target:
+            product = document_target
+        rate = _rate(sentence) if has_price else None
+        transfer_gap = _transfer_gap(sentence) if has_price else None
+        effective_date = _effective_date(sentence) or (
+            document_effective_date if has_price and document_target else None
+        )
+        signals.append({
+            "category": category,
+            "product": product,
+            # 増加と減少が同じ文にある場合は、価格改定にも触れていても
+            # 一方向の評価に丸めず「混在」を優先する。
+            "direction": (
+                "混在" if _direction(sentence) == "混在"
+                else _direction(sentence) if has_demand
+                else _price_status(sentence, rate, effective_date)
+            ),
+            "revision_amount": rate,
+            "transfer_gap": transfer_gap,
+            "effective_date": effective_date,
+            "temporary": any(keyword in sentence for keyword in TEMPORARY_KEYWORDS),
+            "evidence": evidence,
+            "source_title": source.get("title"),
+            "source_date": source.get("date"),
+            "source_url": source.get("url"),
+            "source_name": source.get("source_name", "企業公式IR・ニュース"),
+            "source_page": source.get("page"),
+            "confidence": "A: 数値を会社資料で確認" if rate or transfer_gap else "B: 会社の定性説明",
+        })
+        if len(signals) >= 24:
+            return signals
     return signals
 
 
 def merge_signals(*groups: list[dict] | None) -> list[dict]:
-    """複数資料の信号を、同じ根拠文・種別の重複を除いて統合する。"""
+    """同じ根拠文を1行に統合し、複数の種類は併記する。"""
     merged: list[dict] = []
-    seen: set[tuple] = set()
+    by_evidence: dict[tuple, dict] = {}
     for group in groups:
         for signal in group or []:
             key = (
-                signal.get("category"), signal.get("product"),
-                signal.get("source_date"), signal.get("evidence"),
+                signal.get("source_date"), signal.get("source_url"), signal.get("evidence"),
             )
-            if key in seen:
+            existing = by_evidence.get(key)
+            if existing:
+                categories = []
+                for value in (existing.get("category"), signal.get("category")):
+                    for category in (value or "").split("／"):
+                        if category and category not in categories:
+                            categories.append(category)
+                existing["category"] = "／".join(categories)
+                existing["temporary"] = bool(existing.get("temporary") or signal.get("temporary"))
+                for field in ("revision_amount", "transfer_gap", "effective_date"):
+                    if existing.get(field) is None and signal.get(field) is not None:
+                        existing[field] = signal[field]
+                if existing.get("product") == "全社・複数製品" and signal.get("product"):
+                    existing["product"] = signal["product"]
                 continue
-            seen.add(key)
-            merged.append(signal)
+            row = dict(signal)
+            by_evidence[key] = row
+            merged.append(row)
     return sorted(
         merged,
         key=lambda row: (

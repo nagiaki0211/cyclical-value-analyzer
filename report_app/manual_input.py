@@ -76,6 +76,7 @@ TEMPLATE = {
     "retained_earnings_current_year": None,
     "retained_earnings_transfer": None,  # 利益剰余金から資本剰余金への振替額
     "dividends_from_surplus": None,  # 剰余金の配当額
+    "dividends_paid": None,  # CF計算書の配当金支払額（配当負担の計算に使用）
     # 危険信号フラグ判定の補助情報
     "capital_increase_notes": None,  # 増資履歴に関するメモ(第三者割当増資の有無等)
     # 定性情報(項目6: 株主重視姿勢)

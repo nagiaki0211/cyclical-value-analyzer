@@ -393,9 +393,11 @@ def summarize_cycle_signals(
     if has_business_change and sales_decline:
         detail += "。売上減は事業譲渡・撤退等による事業構成の変化である可能性があります"
 
-    temporary_rows = [
-        row for row in (business_signals or []) if row.get("temporary")
-    ]
+    temporary_rows = [row for row in (business_signals or []) if row.get("temporary")]
+    temporary_evidence = list(dict.fromkeys(
+        row.get("evidence") or row.get("source_title") or "会社資料の一時要因記載"
+        for row in temporary_rows
+    ))
     if temporary_rows:
         if "持続性は未確認" in label:
             label = label.replace(
@@ -409,8 +411,5 @@ def summarize_cycle_signals(
         "label": label,
         "detail": detail,
         "temporary_factor": bool(temporary_rows),
-        "temporary_evidence": [
-            row.get("evidence") or row.get("source_title") or "会社資料の一時要因記載"
-            for row in temporary_rows[:3]
-        ],
+        "temporary_evidence": temporary_evidence[:3],
     }

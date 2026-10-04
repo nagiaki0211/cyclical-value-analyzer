@@ -120,6 +120,7 @@ def compute_valuation_ratios(
     operating_cf: float | None,
     interest_bearing_debt: float | None,
     cash_and_deposits: float | None,
+    securities: float | None = None,
     operating_income: float | None,
     depreciation_amortization: float | None,
     period_label: str | None = None,
@@ -129,7 +130,7 @@ def compute_valuation_ratios(
     """
     PSR・PCFR・EV/EBITDA。
 
-    EV = 時価総額 + 有利子負債 + 非支配株主持分 − 現金及び預金
+    EV = 時価総額 + 有利子負債 + 非支配株主持分 − 現金及び預金 − 有価証券(流動)
     EBITDA = 営業利益 + 減価償却費
 
     第三者が再現できるよう、計算に使った構成要素と対象期間をすべて返す。
@@ -138,11 +139,12 @@ def compute_valuation_ratios(
     """
     ev = None
     if all(value is not None for value in (
-        market_cap, interest_bearing_debt, noncontrolling_interests, cash_and_deposits,
+        market_cap, interest_bearing_debt, noncontrolling_interests,
+        cash_and_deposits, securities,
     )):
         ev = (
             market_cap + interest_bearing_debt
-            + noncontrolling_interests - cash_and_deposits
+            + noncontrolling_interests - cash_and_deposits - securities
         )
 
     ebitda = None
@@ -163,6 +165,7 @@ def compute_valuation_ratios(
             "noncontrolling_interests": noncontrolling_interests,
             "debt_breakdown": debt_breakdown or [],
             "cash_and_deposits": cash_and_deposits,
+            "securities": securities,
             "operating_income": operating_income,
             "depreciation_amortization": depreciation_amortization,
             "revenue": revenue,

@@ -435,6 +435,16 @@ def extract_balance_sheet_detail(facts: dict, kabutan_revenue: float | None) -> 
         facts, "jppfs_cor", "DividendsFromSurplus", context="CurrentYearDuration"
     )
     result["dividends_from_surplus"] = abs(dividends) if dividends is not None else None
+    dividends_paid = _first_available(
+        facts,
+        [
+            ("jppfs_cor", "CashDividendsPaidFinCF"),
+            ("jppfs_cor", "DividendsPaidFinCF"),
+            ("jpigp_cor", "DividendsPaidFinCFIFRS"),
+        ],
+        context="CurrentYearDuration",
+    )
+    result["dividends_paid"] = abs(dividends_paid) if dividends_paid is not None else None
 
     # 特別利益・特別損失(利益の質の判定で、一過性損益を除いた調整後利益に使う)。
     result["extraordinary_income"] = _get_fact(facts, "jppfs_cor", "ExtraordinaryIncome", context="CurrentYearDuration")
