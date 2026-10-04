@@ -486,6 +486,10 @@ def summarize_cycle_signals(
         "temporary_labels": short_labels,
         "temporary_display": f"あり（{'、'.join(short_labels)}）" if has_temporary else "未検出",
         "temporary_evidence": (
-            [f"{f['date']} {f['title']}" for f in (one_off_factors or [])] + temporary_evidence
+            [
+                f["title"] if (f.get("title") or "").startswith(f.get("date") or "\0")
+                else f"{f['date']} {f['title']}"
+                for f in (one_off_factors or [])
+            ] + temporary_evidence
         )[:4],
     }

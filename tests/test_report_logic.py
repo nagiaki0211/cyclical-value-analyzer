@@ -1588,6 +1588,38 @@ class TestFix3OneOffFactorsAcrossChapters(unittest.TestCase):
         self.assertNotIn("一時要因あり", result["label"])
 
 
+class TestRiskEventsSearchAllIrLists(unittest.TestCase):
+    """最新日の一覧が決算短信ライブラリでも、他の一覧の適時開示を取りこぼさない。"""
+
+    def test_risk_events_come_from_all_discovered_lists(self):
+        from unittest import mock
+
+        report_date = date(2026, 10, 4)
+        library = [{"date": "2026-08-07", "title": "2026-08-07 PDF 2027年３月期 第１四半期決算短信",
+                    "url": "https://www.nj-chem.co.jp/app/upload/ir/pdf/64d8.pdf"}]
+        ir_items = ir_disclosures.parse_ir_index(
+            _4406_IR_PAGE_HTML, "https://www.nj-chem.co.jp/app/ir", report_date
+        )
+        source = {
+            "url": "https://www.nj-chem.co.jp/app/ir_library/settlement",
+            "items": library, "source_name": "企業公式IR",
+            "all_items": sorted(library + ir_items, key=lambda r: (r["date"], r["title"]), reverse=True),
+        }
+        with mock.patch.object(ir_disclosures, "fetch_recent_tdnet_disclosures", return_value=None), \
+             mock.patch.object(ir_disclosures, "discover_official_ir_index", return_value=source), \
+             mock.patch.object(ir_disclosures, "_document_pages", side_effect=_fake_document_pages):
+            status = ir_disclosures.fetch_latest_ir_disclosures(
+                "4406", corporate_url="https://www.nj-chem.co.jp/", report_date=report_date
+            )
+        factors = classifier.detect_one_off_factors(
+            status["risk_events"], status["latest_earnings_original"]["date"]
+        )
+        self.assertEqual(
+            sorted(f["label"] for f in factors),
+            sorted(["天然高級アルコール事業撤退", "特別損失 約800百万円"]),
+        )
+
+
 class TestImprovement4CashflowContinuity(unittest.TestCase):
     """改善4: 期首残高+3CFと期末残高の差を年度ごとに確認する。"""
 

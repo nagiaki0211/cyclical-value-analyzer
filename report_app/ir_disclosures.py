@@ -652,11 +652,21 @@ def fetch_latest_ir_disclosures(
     latest_forecast_revision = next(
         (item for item in all_items if _is_forecast_revision(item["title"])), None
     )
-    risk_items = [
-        item for item in items
-        if _title_has_risk(item["title"])
-        and latest_day - date.fromisoformat(item["date"]) <= timedelta(days=120)
-    ][:12]
+    # 最新日の一覧(items)が決算短信だけのライブラリページになることがあるため、
+    # 適時開示は探索した全一覧(all_items)から探す。同じ資料が複数の一覧に
+    # 載る場合はURLで1件にまとめる。
+    risk_items = []
+    seen_risk_urls: set[str] = set()
+    for item in all_items:
+        if (
+            item["url"] in seen_risk_urls
+            or not _title_has_risk(item["title"])
+            or latest_day - date.fromisoformat(item["date"]) > timedelta(days=120)
+        ):
+            continue
+        seen_risk_urls.add(item["url"])
+        risk_items.append(item)
+    risk_items = risk_items[:12]
     document_pages: dict[str, list[str]] = {}
 
     def pages_for(item: dict) -> list[str]:
