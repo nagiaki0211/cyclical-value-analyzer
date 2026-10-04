@@ -77,6 +77,33 @@
   .advice-box { background:var(--box-advice-bg); border:1px solid var(--box-advice-border); border-radius:10px; padding:14px 16px; margin:10px 0; font-size:0.92em; }
   .grade-def-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:8px; margin:10px 0; }
   .grade-def-item { display:flex; align-items:flex-start; gap:8px; font-size:0.88em; }
+  #valuation-comparison .comparison-table { table-layout:fixed; }
+  #valuation-comparison .comparison-table th { white-space:normal; }
+  #valuation-comparison .comparison-table td { vertical-align:top; overflow-wrap:anywhere; }
+  #valuation-comparison .comparison-table th:nth-child(1) { width:17%; }
+  #valuation-comparison .comparison-table th:nth-child(2) { width:24%; }
+  #valuation-comparison .comparison-table th:nth-child(3) { width:12%; }
+  #valuation-comparison .comparison-table th:nth-child(4) { width:13%; }
+  #valuation-comparison .comparison-table th:nth-child(5) { width:34%; }
+  #valuation-comparison .comparison-table td:nth-child(3),
+  #valuation-comparison .comparison-table td:nth-child(4) { font-variant-numeric:tabular-nums; font-weight:700; }
+  #valuation-comparison .market-price-row { background:var(--box-info-bg); font-weight:700; }
+  #valuation-comparison details { border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin:10px 0; }
+  #valuation-comparison summary { cursor:pointer; font-weight:700; }
+  #valuation-comparison details p { overflow-wrap:anywhere; }
+  #valuation-comparison .formula-table-wrap { overflow-x:auto; }
+  #valuation-comparison .formula-table-wrap table { min-width:540px; }
+  #valuation-comparison .mobile-comparison { display:none; }
+  #valuation-comparison .comparison-item { border:1px solid var(--border); border-radius:8px; padding:14px; margin:12px 0; }
+  #valuation-comparison .comparison-item h3 { margin:0 0 10px; }
+  #valuation-comparison .comparison-numbers { display:flex; gap:16px; background:var(--box-info-bg); padding:10px; border-radius:6px; }
+  #valuation-comparison .comparison-numbers > div { flex:1; }
+  #valuation-comparison .comparison-numbers strong { display:block; font-variant-numeric:tabular-nums; }
+  @media screen and (max-width:650px) {
+    #valuation-comparison { padding:16px 12px; }
+    #valuation-comparison .comparison-table { display:none; }
+    #valuation-comparison .mobile-comparison { display:block; }
+  }
 </style>
 </head>
 <body>
@@ -1154,6 +1181,60 @@
       {% endfor %}
     </dl>
   </section>
+
+  {% if price_comparison is defined %}
+  <section class="card" id="valuation-comparison">
+    <h2>現在株価{% if price_comparison.price is not none %} {{ "{:,.0f}".format(price_comparison.price) }}円{% endif %}との比較</h2>
+    <p class="note">どんな前提なら現在株価を評価できるかを比較します。差率＝（推定価値−現在株価）÷現在株価×100。予想上昇率ではありません。</p>
+    <p class="note">資産・負債は計算に使用した実績入力値です。手入力値の年度は出典との照合が必要です。現金力・DCFのFCFは通期実績を使用し、会社予想経常利益では置き換えません。</p>
+    <table class="comparison-table">
+      <tr><th>評価方法</th><th>使用するデータ・前提</th><th>1株の推定価値</th><th>株価との差</th><th>この前提ならどう考えるか</th></tr>
+      {% for row in price_comparison.rows %}
+      <tr{% if row.key == 'price' %} class="market-price-row"{% endif %}>
+        <td style="text-align:left;">{{ row.label }}</td>
+        <td data-label="使用するデータ・前提" style="text-align:left;">{{ row.basis }}</td>
+        <td data-label="1株の推定価値">{% if row.value is not none %}{{ "{:,.1f}".format(row.value) }}円{% else %}<span class="missing">算出不可／未取得</span>{% endif %}</td>
+        <td data-label="株価との差">{% if row.delta is not none %}{{ "{:+,.1f}".format(row.delta) }}円<br>{{ "{:+.1f}".format(row.pct) }}%{% else %}―{% endif %}</td>
+        <td data-label="この前提ならどう考えるか" style="text-align:left;">{{ row.view }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <div class="mobile-comparison">
+      {% for row in price_comparison.rows %}
+      <article class="comparison-item{% if row.key == 'price' %} market-price-row{% endif %}">
+        <h3>{{ row.label }}</h3>
+        <p class="note">{{ row.basis }}</p>
+        <div class="comparison-numbers">
+          <div><span class="note">1株の推定価値</span><strong>{% if row.value is not none %}{{ "{:,.1f}".format(row.value) }}円{% else %}算出不可／未取得{% endif %}</strong></div>
+          <div><span class="note">株価との差</span><strong>{% if row.delta is not none %}{{ "{:+,.1f}".format(row.delta) }}円<br>{{ "{:+.1f}".format(row.pct) }}%{% else %}―{% endif %}</strong></div>
+        </div>
+        <p>{{ row.view }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    <h3>この株価をどう見るか</h3>
+    {% for view in price_comparison.views %}<p>{{ view }}</p>{% endfor %}
+    <p class="note">清算価値＋成長のこの行は、今期会社予想を1年目に置く比較用の計算です。上の実績ベースの書籍式評価・採点とは使用利益と成長開始時点が異なります。年{{ "%.0f"|format(price_comparison.growth * 100) }}%成長はモデルの仮定であり、会社が公表した翌期以降の予想ではありません。</p>
+    {% for warning in price_comparison.warnings %}<p class="note" style="color:var(--warn);">{{ warning }}</p>{% endfor %}
+    <h3>計算式と具体的な数値</h3>
+    <p class="note">FCFは事業で得た現金から設備投資などを差し引いた金額です。非支配株主持分は子会社の価値のうち他の株主に帰属する部分です。将来の利益を現在価値に換算するため割り引いています。</p>
+    {% for row in price_comparison.rows %}{% if row.key != 'price' %}
+    <details><summary>{{ row.label }}の計算根拠</summary>
+      <p>{{ row.formula }}</p>
+      {% if row.key == 'growth' and price_comparison.years %}
+      <div class="formula-table-wrap"><table>
+        <tr><th>年</th><th>実績／予想／仮定</th><th>経常利益（百万円）</th><th>利益の現在価値（百万円）</th><th>計算式</th></tr>
+        {% for year in price_comparison.years %}
+        <tr><td>{{ year.year }}年目{% if year.year == 1 %}<br>{{ price_comparison.forecast_period }}期{% endif %}</td><td>{{ year.basis }}</td>
+          <td>{{ "{:,.2f}".format(year.profit) }}</td><td>{{ "{:,.2f}".format(year.pv) }}</td>
+          <td>{{ "{:,.2f}".format(year.profit) }} × {{ price_comparison.factor }} ÷ (1＋{{ "%.0f"|format(price_comparison.rate * 100) }}%)^{{ year.year }}</td></tr>
+        {% endfor %}
+      </table></div>
+      {% endif %}
+    </details>
+    {% endif %}{% endfor %}
+  </section>
+  {% endif %}
 
   <div class="disclaimer">
     本レポートは投資助言ではなく、分析のための参考情報です。株探(kabutan.jp)等の
