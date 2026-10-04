@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
@@ -109,6 +110,9 @@ class CompanyData:
     business_summary: str = ""
     corporate_url: str | None = None
     price: float | None = None
+    price_date: str | None = None
+    price_time: str | None = None
+    price_type: str | None = None
     market_cap: float | None = None
     per: float | None = None
     pbr: float | None = None
@@ -144,6 +148,16 @@ def _parse_basic_info(soup: BeautifulSoup, data: CompanyData) -> None:
     price_tag = soup.find("span", class_="kabuka")
     if price_tag:
         data.price = _to_number(price_tag.get_text(strip=True).replace("円", ""))
+        stock_info = price_tag.find_parent(id="stockinfo_i1") or price_tag.find_parent(id="stockinfo_i0")
+        time_tag = stock_info.find("time", datetime=True) if stock_info else None
+        if time_tag:
+            try:
+                timestamp = datetime.fromisoformat(time_tag["datetime"])
+                data.price_date = timestamp.date().isoformat()
+                data.price_time = timestamp.strftime("%H:%M")
+                data.price_type = "終値" if (timestamp.hour, timestamp.minute) >= (15, 30) else "場中値"
+            except (TypeError, ValueError):
+                data.fetch_errors.append("株価の市場基準日時を解析できませんでした")
 
     # 'PBR' は基本情報テーブルにしか出現しないため、これをアンカーにする
     # ('PER' はヒストリカルPERの小テーブルにも出現し曖昧なため使わない)。

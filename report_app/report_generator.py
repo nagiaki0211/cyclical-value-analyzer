@@ -9,7 +9,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from report_app import advanced_metrics, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation
+from report_app import ai_analysis_package, advanced_metrics, business_signals, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation
 from report_app.edinet_config import get_edinet_api_key
 from report_app.manual_input import load_or_create_manual_data
 from report_app.svg_chart import bar_chart_svg
@@ -43,7 +43,7 @@ GLOSSARY = {
     "ROIC(投下資本利益率)": "有利子負債と自己資本(投下資本)に対して、どれだけ効率よく利益を生み出したかを示す指標。ROE・ROAと並ぶ資本効率の物差し。",
     "PSR(株価売上高倍率)": "時価総額が売上高の何倍かを示す指標。赤字企業でも算出できるため、PERが使えない局面の補助指標になる。",
     "PCFR(株価キャッシュフロー倍率)": "時価総額が営業キャッシュフローの何倍かを示す指標。会計上の利益より現金の実態に近い割安度を見られる。",
-    "EV/EBITDA": "企業価値(EV = 時価総額+有利子負債-現金)が、金利・税金・減価償却前利益(EBITDA)の何倍かを示す指標。減価償却が大きい設備投資型企業の割安度比較に向く。",
+    "EV/EBITDA": "企業価値(EV = 時価総額+有利子負債+非支配株主持分-現金及び預金-有価証券〈流動〉)が、金利・税金・減価償却前利益(EBITDA)の何倍かを示す指標。連結EBITDAと対応させるため非支配株主持分を含める。",
     "アクルーアル比率": "純利益と営業キャッシュフローのズレを総資産で割った指標。値が大きいほど、利益が現金を伴っていない(利益の「質」が低い)可能性がある。",
     "独自簡易スコア": "収益性・営業CF・利益率・運転資本など最大9項目を独自に採点する参考指標。正式なPiotroski F-Scoreとは異なる。",
     "損益分岐点(高低点法)": "売上高が最大の期と最小の期の実績から、固定費・変動費の大まかな内訳を逆算する簡便な手法。シクリカル株の業績回復時の利益インパクトの目安に使う。",
@@ -136,7 +136,7 @@ def _enrich_manual_data_with_edinet(code: str, manual: dict, latest_period: str 
         "submit_date": detail.get("_edinet_submit_date"),
         "filled_fields": filled_fields,
     }
-    for key in ("_segments", "_major_shareholders", "_risk_events",
+    for key in ("_segments", "_major_shareholders", "_risk_events", "_order_disclosure",
                 "_interest_bearing_debt_breakdown", "_capital_history",
                 "_goodwill_inferred_zero", "_securities_inferred_zero"):
         manual[key] = detail.get(key)
@@ -152,7 +152,10 @@ def _shares_for_per_share_value(manual: dict) -> float | None:
     return issued - treasury
 
 
-def _build_price_basis(company_data, merged: dict, latest_period: str | None) -> dict:
+def _build_price_basis(
+    company_data, merged: dict, latest_period: str | None,
+    temporary_factor: bool = False,
+) -> dict:
     """
     PER・PBRがどの時点・どの数値を使った指標かを明示する。
 
@@ -188,6 +191,17 @@ def _build_price_basis(company_data, merged: dict, latest_period: str | None) ->
             f"({latest_period}期) = {pbr_value:.2f}倍"
         )
 
+    price_date = getattr(company_data, "price_date", None)
+    price_time = getattr(company_data, "price_time", None)
+    price_type = getattr(company_data, "price_type", None)
+    if price_date:
+        price_as_of = price_date
+        if price_time:
+            price_as_of += f" {price_time}"
+        price_as_of += f"（{price_type or '種別不明'}）"
+    else:
+        price_as_of = "市場基準日不明"
+
     return {
         "per_label": per_label,
         "per_basis": per_basis,
@@ -198,7 +212,8 @@ def _build_price_basis(company_data, merged: dict, latest_period: str | None) ->
         "bps": bps,
         "bps_period": latest_period,
         "pbr_value": pbr_value,
-        "price_as_of": "株探の個別銘柄ページ取得時点の株価",
+        "price_as_of": price_as_of,
+        "per_note": "会社予想に一時要因を含む可能性" if temporary_factor else None,
     }
 
 
@@ -250,7 +265,7 @@ def _build_data_sources(code: str, company_data, latest_period: str | None, manu
     ir_status = manual.get("_ir_status")
     if ir_status and ir_status.get("confirmed"):
         sources.append({
-            "items": "最新の適時開示・定性リスク",
+            "items": "最新の適時開示・定性リスク・受注需要・価格転嫁",
             "source_name": ir_status.get("source_name", "企業公式IR / TDnet"),
             "source_url": ir_status.get("source_url"),
             "document_date": ir_status.get("latest_date"),
@@ -274,6 +289,7 @@ def _build_section_numbers(flags: dict) -> dict:
         ("annual", True),
         ("quarterly", flags.get("quarterly")),
         ("segments", flags.get("segments")),
+        ("business_signals", True),
         ("financials", True),
         ("indicators", True),
         ("shareholders", flags.get("shareholders")),
@@ -326,11 +342,47 @@ def generate_report(code: str) -> Path:
     ir_status = ir_disclosures.fetch_latest_ir_disclosures(
         code, manual.get("official_ir_url"), company_data.corporate_url,
     )
+    ir_status.setdefault("warnings", [])
+    latest_quarterly_date = max(
+        (
+            row.get("announced_on") for row in company_data.quarterly_performance
+            if row.get("announced_on")
+        ),
+        default=None,
+    )
+    latest_earnings_date = (
+        (ir_status.get("latest_earnings_original") or {}).get("date")
+        or (ir_status.get("latest_earnings") or {}).get("date")
+    )
+    if latest_quarterly_date and (
+        not latest_earnings_date or latest_earnings_date < latest_quarterly_date
+    ):
+        ir_status["warnings"].append(
+            "IR確認が最新決算より古い"
+            f"（IR決算短信: {latest_earnings_date or '未取得'} / "
+            f"四半期データ発表日: {latest_quarterly_date}）"
+        )
     manual["_ir_status"] = ir_status
+    extracted_signals = ir_status.get("business_signals") or []
+    combined_business_signals = business_signals.merge_signals(extracted_signals)
+    order_disclosure = manual.get("_order_disclosure")
+    business_monitor = {
+        "signals": combined_business_signals,
+        "order_disclosure": order_disclosure,
+        "warning": None if combined_business_signals else (
+            "公式資料から受注・需要・価格転嫁の明示情報を確認できませんでした。"
+            "非開示であることを意味するとは限らないため、原文確認が必要です。"
+        ),
+    }
+    temporary_factor = any(
+        signal.get("temporary") for signal in combined_business_signals
+    )
+    forecast_revision = ir_status.get("forecast_revision")
 
     health_metrics = metrics.compute_health_metrics(latest, manual)
     profitability_metrics = metrics.compute_profitability_metrics(latest, manual)
     growth_metrics = metrics.compute_growth_metrics(merged, manual)
+    cash_conversion_cycle = metrics.compute_cash_conversion_cycle(latest, manual)
     danger_flags = metrics.compute_danger_flags(merged, manual)
 
     roic = advanced_metrics.compute_roic(latest, manual)
@@ -345,6 +397,16 @@ def generate_report(code: str) -> Path:
     liquidation = valuation.compute_liquidation_value(manual)
     # 書籍の方式。投資判断(項目2)にはこちらを使う。
     dcf_taachan = valuation.compute_dcf_taachan(latest, manual, liquidation["value"])
+    if (
+        forecast_revision
+        and forecast_revision.get("h2_operating_income_yoy") is not None
+        and forecast_revision["h2_operating_income_yoy"] < 0
+    ):
+        dcf_taachan["warnings"].append(
+            "年20%成長の前提と会社予想が乖離しています。"
+            "修正後の下期営業利益予想は前年下期実績比"
+            f"{forecast_revision['h2_operating_income_yoy']:+.1f}%です"
+        )
     # WACC・ターミナルバリューを使う一般的なモデル。アプリ独自の参考値。
     dcf = valuation.compute_dcf(latest, manual, _shares_for_per_share_value(manual))
     net_cash = valuation.compute_net_cash(latest, manual)
@@ -354,7 +416,9 @@ def generate_report(code: str) -> Path:
     # 取得される)もここで百万円単位に揃える。単位を揃えないまま比較すると、
     # 常に「時価総額の方が大きい」ように見えてしまう(実際に発生していた不具合)。
     market_cap_million = company_data.market_cap / 1e6 if company_data.market_cap else None
-    price_basis = _build_price_basis(company_data, merged, latest_period)
+    price_basis = _build_price_basis(
+        company_data, merged, latest_period, temporary_factor=temporary_factor
+    )
     effective_pbr = price_basis.get("pbr_value")
     asset_type = classifier.classify_asset_value(effective_pbr, latest.get("equity_ratio"))
     profit_type = classifier.classify_profit_value(
@@ -420,10 +484,12 @@ def generate_report(code: str) -> Path:
         operating_cf=latest.get("operating_cf"),
         interest_bearing_debt=manual.get("interest_bearing_debt"),
         cash_and_deposits=manual.get("cash_and_deposits"),
+        securities=manual.get("securities"),
         operating_income=latest.get("operating_income"),
         depreciation_amortization=manual.get("depreciation_amortization"),
         period_label=latest_period,
         debt_breakdown=manual.get("_interest_bearing_debt_breakdown"),
+        noncontrolling_interests=manual.get("noncontrolling_interests"),
     )
     accrual_ratio = advanced_metrics.compute_accrual_ratio(
         latest.get("net_income"), latest.get("operating_cf"), latest.get("total_assets")
@@ -445,7 +511,10 @@ def generate_report(code: str) -> Path:
     cycle_signals = classifier.build_cycle_signals(
         merged, quarterly_analysis, company_data.annual_performance
     )
-    cycle_summary = classifier.summarize_cycle_signals(cycle_signals)
+    cycle_summary = classifier.summarize_cycle_signals(
+        cycle_signals, pbr=effective_pbr, risk_events=risk_events,
+        business_signals=combined_business_signals,
+    )
     cyclical_type["phase"] = cycle_summary["label"]
     cyclical_type["detail"] = cycle_summary["detail"]
     summary_text = summary.build_summary(
@@ -466,9 +535,19 @@ def generate_report(code: str) -> Path:
             "segments": bool(segments),
             "shareholders": bool(major_shareholders),
             "risk_events": True,
-            "breakeven": bool(breakeven.get("available")),
+            "breakeven": True,
         }
     )
+
+    shareholder_equity_changes = {
+        "treasury_stock_purchase": manual.get("treasury_stock_purchase"),
+        "treasury_stock_retirement": manual.get("treasury_stock_retirement"),
+        "retained_earnings_opening": manual.get("retained_earnings_prev_year"),
+        "retained_earnings_closing": manual.get("retained_earnings_current_year"),
+        "retained_earnings_transfer": manual.get("retained_earnings_transfer"),
+        "dividends": manual.get("dividends_from_surplus"),
+        "profit": latest.get("net_income"),
+    }
 
     charts = _build_annual_series(company_data)
     if quarterly_analysis:
@@ -493,14 +572,16 @@ def generate_report(code: str) -> Path:
 
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=True)
     template = env.get_template("report_template.html")
+    generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     html = template.render(
         company=company_data,
-        generated_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        generated_at=generated_at,
         latest_period=latest_period,
         latest=latest,
         health_metrics=health_metrics,
         profitability_metrics=profitability_metrics,
         growth_metrics=growth_metrics,
+        cash_conversion_cycle=cash_conversion_cycle,
         danger_flags=danger_flags,
         liquidation=liquidation,
         dcf=dcf,
@@ -523,6 +604,9 @@ def generate_report(code: str) -> Path:
         quarterly_advice=QUARTERLY_ADVICE,
         segments=segments,
         segments_total=segments_total,
+        business_monitor=business_monitor,
+        forecast_revision=forecast_revision,
+        shareholder_equity_changes=shareholder_equity_changes,
         major_shareholders=major_shareholders,
         governance=governance,
         roic=roic,
@@ -547,4 +631,14 @@ def generate_report(code: str) -> Path:
     safe_name = (company_data.name or code).replace("/", "_")
     out_path = OUTPUT_DIR / f"{code}_{safe_name}_report.html"
     out_path.write_text(html, encoding="utf-8")
+    ai_analysis_package.write_analysis_request(
+        out_path,
+        code=code,
+        company_name=company_data.name or code,
+        report_filename=out_path.name,
+        generated_at=generated_at,
+        data_sources=data_sources,
+        ir_status=ir_status,
+        business_monitor=business_monitor,
+    )
     return out_path

@@ -20,6 +20,11 @@ def _render_report_html(html_content: str) -> None:
         components.html(html_content, height=2400, scrolling=True)
 
 from report_app.edinet_config import get_edinet_api_key
+from report_app.ai_analysis_package import (
+    analysis_request_path,
+    download_filenames,
+    project_instructions_text,
+)
 from report_app.report_generator import generate_report
 
 st.set_page_config(page_title="企業分析レポート生成", layout="wide")
@@ -72,15 +77,47 @@ if generate_clicked and code.strip():
             report_path = generate_report(ticker)
         except Exception as e:  # noqa: BLE001
             st.error(f"レポート生成中にエラーが発生しました: {e}")
-            st.stop()
+        else:
+            html_content = report_path.read_text(encoding="utf-8")
+            ai_request = analysis_request_path(report_path)
+            report_download_name, ai_request_download_name = download_filenames(report_path)
+            st.session_state["generated_report"] = {
+                "html_content": html_content,
+                "report_file_name": report_download_name,
+                "ai_request_content": (
+                    ai_request.read_text(encoding="utf-8") if ai_request.exists() else None
+                ),
+                "ai_request_file_name": ai_request_download_name,
+            }
 
-    html_content = report_path.read_text(encoding="utf-8")
-
-    st.success(f"レポートを生成しました: {report_path.name}")
+generated_report = st.session_state.get("generated_report")
+if generated_report:
+    st.success(f"レポートを生成しました: {generated_report['report_file_name']}")
     st.download_button(
         "レポートをHTMLファイルとしてダウンロード",
-        data=html_content,
-        file_name=report_path.name,
+        data=generated_report["html_content"],
+        file_name=generated_report["report_file_name"],
         mime="text/html",
+        on_click="ignore",
     )
-    _render_report_html(html_content)
+    if generated_report["ai_request_content"] is not None:
+        st.download_button(
+            "AIプロジェクト共通指示書をダウンロード（初回のみ）",
+            data=project_instructions_text(),
+            file_name="AI_PROJECT_INSTRUCTIONS.md",
+            mime="text/markdown",
+            on_click="ignore",
+        )
+        st.download_button(
+            "AI分析依頼書をダウンロード",
+            data=generated_report["ai_request_content"],
+            file_name=generated_report["ai_request_file_name"],
+            mime="text/markdown",
+            on_click="ignore",
+        )
+        st.info(
+            "ChatGPTまたはClaudeのプロジェクトに、"
+            "AI_PROJECT_INSTRUCTIONS.mdを一度設定し、"
+            "レポートとAI分析依頼書を添付してください。"
+        )
+    _render_report_html(generated_report["html_content"])
