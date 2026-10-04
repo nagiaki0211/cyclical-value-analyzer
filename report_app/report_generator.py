@@ -374,7 +374,12 @@ def generate_report(code: str) -> Path:
             "非開示であることを意味するとは限らないため、原文確認が必要です。"
         ),
     }
-    temporary_factor = any(
+    # 12章の一時要因判定には、最新決算短信の発表日±数日に出た適時開示
+    # (特別損失・事業撤退など。9章で検出したもの)も含める。
+    one_off_factors = classifier.detect_one_off_factors(
+        ir_status.get("risk_events"), latest_earnings_date or latest_quarterly_date,
+    )
+    temporary_factor = bool(one_off_factors) or any(
         signal.get("temporary") for signal in combined_business_signals
     )
     forecast_revision = ir_status.get("forecast_revision")
@@ -491,6 +496,15 @@ def generate_report(code: str) -> Path:
         debt_breakdown=manual.get("_interest_bearing_debt_breakdown"),
         noncontrolling_interests=manual.get("noncontrolling_interests"),
     )
+    fiscal_year_end = _period_to_fiscal_year_end(latest_period) if latest_period else None
+    quarter_reference = valuation.compute_quarter_end_reference(
+        ir_status.get("quarter_balance"),
+        fiscal_year_end.isoformat() if fiscal_year_end else None,
+        manual,
+        market_cap=market_cap_million,
+        ebitda=valuation_ratios.get("ebitda"),
+    )
+    cashflow_checks = metrics.check_cashflow_continuity(company_data.cashflow)
     accrual_ratio = advanced_metrics.compute_accrual_ratio(
         latest.get("net_income"), latest.get("operating_cf"), latest.get("total_assets")
     )
@@ -514,6 +528,7 @@ def generate_report(code: str) -> Path:
     cycle_summary = classifier.summarize_cycle_signals(
         cycle_signals, pbr=effective_pbr, risk_events=risk_events,
         business_signals=combined_business_signals,
+        one_off_factors=one_off_factors,
     )
     cyclical_type["phase"] = cycle_summary["label"]
     cyclical_type["detail"] = cycle_summary["detail"]
@@ -587,6 +602,9 @@ def generate_report(code: str) -> Path:
         dcf=dcf,
         dcf_taachan=dcf_taachan,
         net_cash=net_cash,
+        quarter_reference=quarter_reference,
+        cashflow_checks=cashflow_checks,
+        cashflow_check_by_period={row["period"]: row for row in cashflow_checks},
         asset_type=asset_type,
         profit_type=profit_type,
         cyclical_type=cyclical_type,

@@ -172,6 +172,10 @@
       PSR = 時価総額 ÷ 売上高({{ "{:,.0f}".format(valuation_ratios.components.revenue) if valuation_ratios.components.revenue is not none else "N/A" }})、
       PCFR = 時価総額 ÷ 営業CF({{ "{:,.0f}".format(valuation_ratios.components.operating_cf) if valuation_ratios.components.operating_cf is not none else "N/A" }})。
     </p>
+    {% if quarter_reference.available %}
+    <p class="note">参考：直近四半期末（{{ quarter_reference.period_end }}）の現金・有利子負債で計算すると
+      EV/EBITDA {% if quarter_reference.ev_ebitda is not none %}{{ "%.2f"|format(quarter_reference.ev_ebitda) }} 倍{% else %}未取得{% endif %}（EBITDAは年度実績のまま。詳細は{{ sec.valuation }}章）。</p>
+    {% endif %}
     {% endif %}
   </section>
 
@@ -400,17 +404,25 @@
     <h3>キャッシュフロー推移 <span class="unit-note">(単位: 百万円)</span></h3>
     {{ charts.cf_chart|safe }}
     <table>
-      <tr><th>決算期</th><th>営業CF</th><th>投資CF</th><th>財務CF</th><th>現金等残高</th></tr>
+      <tr><th>決算期</th><th>営業CF</th><th>投資CF</th><th>財務CF</th><th>現金等残高</th><th>整合チェック<br><span class="note">期末残高 −(期首残高＋3CF合計)</span></th></tr>
       {% for r in company.cashflow %}
+      {% set chk = cashflow_check_by_period.get(r.period) %}
       <tr>
         <td>{{ r.period }}</td>
         <td>{{ "{:,.0f}".format(r.operating_cf) if r.operating_cf is not none else "―" }}</td>
         <td>{{ "{:,.0f}".format(r.investing_cf) if r.investing_cf is not none else "―" }}</td>
         <td>{{ "{:,.0f}".format(r.financing_cf) if r.financing_cf is not none else "―" }}</td>
         <td>{{ "{:,.0f}".format(r.cash_balance) if r.cash_balance is not none else "―" }}</td>
+        <td>{% if chk and chk.gap is not none %}{% if chk.warning %}<span style="color:var(--bad);">⚠ {{ "{:+,.0f}".format(chk.gap) }}</span>{% else %}{{ "{:+,.0f}".format(chk.gap) }}{% endif %}{% else %}<span class="missing">算出不可</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </table>
+    {% for chk in cashflow_checks if chk.warning %}
+    <p class="note" style="color:var(--bad);">⚠ {{ chk.warning }}</p>
+    {% endfor %}
+    <p class="note">期首残高（前期末の現金等残高）＋営業CF＋投資CF＋財務CF と期末残高の差です。
+      現金等残高は為替換算差額・連結範囲の変更でも動くため差が出ること自体は異常ではありませんが、
+      差の絶対値が期末残高の5%以上または100百万円以上の場合は警告します。前期のデータが無い年度は「算出不可」です。</p>
 
     <h3>自己株式の取得・消却と利益剰余金の変動 <span class="unit-note">(単位: 百万円)</span></h3>
     <table>
@@ -461,6 +473,10 @@
       {% endif %}
       棚卸資産・投資有価証券(固定)・有形無形固定資産・長期貸付金は当座資産に含めていません。
       固定長期適合率 = 固定資産 ÷(自己資本 ＋ 固定負債)× 100。
+      {% if quarter_reference.available %}
+      いずれも年度末（{{ latest_period }}期末）の貸借対照表による値です。参考：直近四半期末（{{ quarter_reference.period_end }}）の当座比率は
+      {% if quarter_reference.quick_ratio is not none %}{{ "%.1f"|format(quarter_reference.quick_ratio) }}%{% else %}未取得{% endif %}（詳細は{{ sec.valuation }}章）。
+      {% endif %}
     </p>
 
     <h3>② 収益性</h3>
@@ -609,11 +625,13 @@
     <table>
       <tr><th>確認項目</th><th>発表日</th><th>資料</th></tr>
       <tr><td>IR一覧の最新開示</td><td>{{ ir_status.latest_date }}</td><td>取得日時: {{ ir_status.retrieved_at }}</td></tr>
-      <tr><td>最新の決算短信（当初版）</td><td>{% if ir_status.latest_earnings_original %}{{ ir_status.latest_earnings_original.date }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_earnings_original %}<a href="{{ ir_status.latest_earnings_original.url }}">{{ ir_status.latest_earnings_original.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
-      <tr><td>最新の決算短信（レビュー・訂正版を含む）</td><td>{% if ir_status.latest_earnings %}{{ ir_status.latest_earnings.date }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_earnings %}<a href="{{ ir_status.latest_earnings.url }}">{{ ir_status.latest_earnings.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
-      <tr><td>最新の業績予想修正</td><td>{% if ir_status.latest_forecast_revision %}{{ ir_status.latest_forecast_revision.date }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_forecast_revision %}<a href="{{ ir_status.latest_forecast_revision.url }}">{{ ir_status.latest_forecast_revision.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
+      <tr><td>最新の決算短信（当初版）</td><td>{% if ir_status.latest_earnings_original %}{{ ir_status.latest_earnings_original.date }}{% if ir_status.latest_earnings_original.date_source %}<br><span class="note">根拠: {{ ir_status.latest_earnings_original.date_source }}</span>{% endif %}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_earnings_original %}<a href="{{ ir_status.latest_earnings_original.url }}">{{ ir_status.latest_earnings_original.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
+      <tr><td>最新の決算短信（レビュー・訂正版を含む）</td><td>{% if ir_status.latest_earnings %}{{ ir_status.latest_earnings.date }}{% if ir_status.latest_earnings.date_source %}<br><span class="note">根拠: {{ ir_status.latest_earnings.date_source }}</span>{% endif %}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_earnings %}<a href="{{ ir_status.latest_earnings.url }}">{{ ir_status.latest_earnings.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
+      <tr><td>最新の業績予想修正</td><td>{% if ir_status.latest_forecast_revision %}{{ ir_status.latest_forecast_revision.date }}{% if ir_status.latest_forecast_revision.date_source %}<br><span class="note">根拠: {{ ir_status.latest_forecast_revision.date_source }}</span>{% endif %}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_forecast_revision %}<a href="{{ ir_status.latest_forecast_revision.url }}">{{ ir_status.latest_forecast_revision.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
     </table>
     {% for warning in ir_status.warnings %}<p class="note" style="color:var(--bad);">⚠ {{ warning }}</p>{% endfor %}
+    <p class="note">発表日はIR一覧に掲載された日付と資料本文冒頭の日付を照合して表示します（取得日時・PDFの更新日時は使いません）。
+      食い違う場合は本文冒頭の日付を採用し、警告を表示します。</p>
     {% else %}
     <p class="note" style="color:var(--bad);">⚠ 最新IR・TDnet未確認</p>
     {% endif %}
@@ -650,7 +668,7 @@
       <div class="kpi">
         <div class="label">{{ net_cash.label or "ネットキャッシュ" }}</div>
         <div class="value">
-          {% if net_cash.narrow is not none %}{{ "{:,.0f}".format(net_cash.narrow) }} 百万円
+          {% if net_cash.display_value is not none %}{{ "{:,.0f}".format(net_cash.display_value) }} 百万円
           {% else %}<span class="missing">確認不能</span>{% endif %}
         </div>
       </div>
@@ -681,6 +699,32 @@
     </p>
     {% else %}
     <p class="note"><span class="missing">確認不能</span>(現金及び預金・有価証券〈流動〉・有利子負債のいずれかを取得できませんでした)</p>
+    {% endif %}
+
+    <h3>参考：直近四半期末ベース</h3>
+    {% if quarter_reference.available %}
+    <p class="note">上の表とEV/EBITDA・当座比率は年度末（{{ latest_period }}期末）の貸借対照表で計算しています。
+      年度末より新しい四半期決算短信（{{ quarter_reference.source_date }}発表、{{ quarter_reference.period_end }}時点）があるため、
+      その四半期末の値を参考として並べます（年度末ベースの値は置き換えていません）。</p>
+    <table>
+      <tr><th>項目</th><th>年度末ベース<br><span class="note">{{ latest_period }}期末</span></th><th>参考：直近四半期末<br><span class="note">{{ quarter_reference.period_end }}</span></th></tr>
+      <tr><td>現金及び預金</td><td>{% if net_cash.cash is not none %}{{ "{:,.0f}".format(net_cash.cash) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{{ "{:,.0f}".format(quarter_reference.cash) }}</td></tr>
+      <tr><td>＋ 有価証券(流動)</td><td>{% if net_cash.securities is not none %}{{ "{:,.0f}".format(net_cash.securities) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{{ "{:,.0f}".format(quarter_reference.securities) }}{% if not quarter_reference.securities_listed %}<br><span class="note">短信に別掲なし</span>{% endif %}</td></tr>
+      {% for item in quarter_reference.debt_items %}
+      <tr><td style="padding-left:1.5em;">（借入金等）{{ item.label }}</td><td>―</td><td>{{ "{:,.0f}".format(item.value) }}</td></tr>
+      {% endfor %}
+      <tr><td>－ 有利子負債（借入金等の合計）</td><td>{% if net_cash.debt is not none %}{{ "{:,.0f}".format(net_cash.debt) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{{ "{:,.0f}".format(quarter_reference.debt) }}</td></tr>
+      <tr style="font-weight:bold;"><td>＝ 狭義ネットキャッシュ（符号付き）</td><td>{% if net_cash.narrow is not none %}{{ "{:,.0f}".format(net_cash.narrow) }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{{ "{:,.0f}".format(quarter_reference.narrow) }}</td></tr>
+      <tr style="font-weight:bold;"><td>状態</td><td>{% if net_cash.display_text %}{{ net_cash.display_text }}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{{ quarter_reference.display_text }}</td></tr>
+      <tr><td>EV/EBITDA</td><td>{% if valuation_ratios.ev_ebitda is not none %}{{ "%.2f"|format(valuation_ratios.ev_ebitda) }} 倍{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if quarter_reference.ev_ebitda is not none %}{{ "%.2f"|format(quarter_reference.ev_ebitda) }} 倍<br><span class="note">EV {{ "{:,.0f}".format(quarter_reference.ev) }} ÷ 年度EBITDA {{ "{:,.0f}".format(quarter_reference.ebitda) }}</span>{% else %}<span class="missing">未取得</span>{% endif %}</td></tr>
+      <tr><td>当座比率</td><td>{% if health_metrics.quick_ratio.value is not none %}{{ "%.1f"|format(health_metrics.quick_ratio.value) }}%{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if quarter_reference.quick_ratio is not none %}{{ "%.1f"|format(quarter_reference.quick_ratio) }}%{% else %}<span class="missing">未取得</span>{% endif %}</td></tr>
+    </table>
+    <p class="note">出典: <a href="{{ quarter_reference.source_url }}">{{ quarter_reference.source_title }}</a>（四半期連結貸借対照表の当四半期末列）。
+      有利子負債は短信に別掲された借入金・社債等の合計で、「その他」に含まれる科目は含みません。
+      参考EV/EBITDAは、EV（時価総額＋四半期末の有利子負債＋非支配株主持分−現金及び預金−有価証券）を年度実績のEBITDAで割った値で、時点が揃っていない点に注意してください。</p>
+    {% for w in quarter_reference.warnings %}<p class="note" style="color:var(--bad);">⚠ {{ w }}</p>{% endfor %}
+    {% else %}
+    <p class="note">{{ quarter_reference.reason or "直近四半期末の値は未取得です" }}（年度末ベースの値のみ表示しています）。</p>
     {% endif %}
 
     <h3>たーちゃん式企業価値評価(書籍の方式)</h3>
@@ -825,6 +869,11 @@
       (1+WACC)^{{ dcf.forecast_years }} で現在価値に割り引いています。
       永久成長率がWACC以上になる組み合わせは計算不能(N/A)としています。
       {% if dcf.monotonic_ok %}弱気 ≦ 標準 ≦ 強気 の関係が成立していることを確認済みです。{% endif %}
+    </p>
+    <p class="note">
+      FCF成長率と永久成長率がともに0%、WACCが現金力モデルの割引率と同じで、基準FCF・現金・有価証券・有利子負債・非支配株主持分も同じ場合、
+      DCFの株主価値は現金力モデルと数学的に同値になります。両者の一致は独立した2モデルによる裏付けではなく、投資判断の根拠として重複カウントしません。
+      項目2の採点では、現金力モデルと清算価値＋成長モデルを使用し、このDCFの3シナリオは追加採点しません。
     </p>
     {% for w in dcf.warnings %}
     <p class="note" style="color:var(--warn);">⚠ {{ w }}</p>
@@ -1054,9 +1103,9 @@
       </tr>
       {% endfor %}
       <tr>
-        <td>一時要因あり</td><td>最新決算短信</td><td>会社説明</td>
-        <td>{% if cycle_summary.temporary_factor %}<span style="color:var(--bad);">あり</span>{% else %}未検出{% endif %}</td>
-        <td style="text-align:left;">{% if cycle_summary.temporary_factor %}一時要因を含む（持続性は未確認）。{{ cycle_summary.temporary_evidence|join(" / ") }}{% else %}対象キーワードを検出しませんでした{% endif %}</td>
+        <td>一時要因あり</td><td>最新決算短信＋同時期（発表日±3日）の適時開示</td><td>会社説明</td>
+        <td>{% if cycle_summary.temporary_factor %}<span style="color:var(--bad);">{{ cycle_summary.temporary_display }}</span>{% else %}未検出{% endif %}</td>
+        <td style="text-align:left;">{% if cycle_summary.temporary_factor %}一時要因あり（持続性は要確認）。根拠: {{ cycle_summary.temporary_evidence|join(" / ") }}{% else %}決算短信本文・同時期の適時開示から対象キーワードを検出しませんでした{% endif %}</td>
       </tr>
     </table>
     <p class="note">

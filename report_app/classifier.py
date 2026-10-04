@@ -327,9 +327,74 @@ def build_cycle_signals(merged_periods: dict, quarterly_analysis: list[dict] | N
     return signals
 
 
+# 業績を一時的にゆがめる開示(資料タイトルで判定)。業績予想の修正そのものは
+# 一時要因ではないため含めない。先頭ほど優先して1開示1ラベルにまとめる。
+_ONE_OFF_AMOUNT_KEYWORDS = ("特別損失", "特別利益", "減損", "評価損")
+_ONE_OFF_EVENT_KEYWORDS = (
+    "撤退", "工場閉鎖", "生産終了", "事業譲渡", "営業譲渡", "株式譲渡",
+    "持分譲渡", "合弁解消", "解散",
+)
+ONE_OFF_WINDOW_DAYS = 3
+
+
+def _one_off_label(event: dict) -> str | None:
+    title = event.get("title") or ""
+    for keyword in _ONE_OFF_AMOUNT_KEYWORDS:
+        if keyword in title:
+            amount = event.get("amount_text")
+            return f"{keyword} {amount}" if amount else f"{keyword}（金額未確定）"
+    if "撤退" in title:
+        business = re.search(r"([^\s、。（）()「」]{1,30}?事業)(?:から)?の?撤退", title)
+        return f"{business.group(1)}撤退" if business else "事業撤退"
+    for keyword in _ONE_OFF_EVENT_KEYWORDS:
+        if keyword in title:
+            return keyword
+    return None
+
+
+def detect_one_off_factors(
+    risk_events: list[dict] | None, earnings_date: str | None,
+    window_days: int = ONE_OFF_WINDOW_DAYS,
+) -> list[dict]:
+    """
+    最新の決算短信と同時期(発表日±window_days日)に出た適時開示から、
+    特別損益・事業撤退など業績を一時的にゆがめる要因を抜き出す。
+
+    決算短信の本文だけを検索すると、同じ日に別資料で開示された特別損失や
+    事業撤退を見落とし、9章(定性リスク)と12章(シクリカル判定)が矛盾する。
+    発表日の無い事象(有価証券報告書の記述など)は時期を照合できないため除く。
+    """
+    from datetime import date, timedelta
+
+    if not earnings_date:
+        return []
+    try:
+        base = date.fromisoformat(earnings_date)
+    except ValueError:
+        return []
+    factors: list[dict] = []
+    seen: set[str] = set()
+    for event in risk_events or []:
+        try:
+            event_date = date.fromisoformat(event.get("date") or "")
+        except ValueError:
+            continue
+        if abs(event_date - base) > timedelta(days=window_days):
+            continue
+        label = _one_off_label(event)
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        factors.append({
+            "label": label, "date": event.get("date"),
+            "title": event.get("title"), "url": event.get("url"),
+        })
+    return factors
+
+
 def summarize_cycle_signals(
     signals: list[dict], pbr: float | None = None, risk_events: list[dict] | None = None,
-    business_signals: list[dict] | None = None,
+    business_signals: list[dict] | None = None, one_off_factors: list[dict] | None = None,
 ) -> dict:
     """
     複数の判定材料から総合判断を作る。材料が矛盾する場合は
@@ -398,18 +463,33 @@ def summarize_cycle_signals(
         row.get("evidence") or row.get("source_title") or "会社資料の一時要因記載"
         for row in temporary_rows
     ))
+    one_off_labels = [factor["label"] for factor in (one_off_factors or [])]
+    short_labels = list(one_off_labels)
     if temporary_rows:
-        if "持続性は未確認" in label:
-            label = label.replace(
-                "(持続性は未確認)", "(一時要因を含む・持続性は未確認)"
+        short_labels.append("一時的需要・前倒し等（会社説明）")
+    has_temporary = bool(short_labels)
+    if has_temporary:
+        label = label.replace("(持続性は未確認)", "") + "／一時要因あり（持続性は要確認）"
+        if one_off_labels:
+            detail += (
+                "。最新決算短信と同時期の適時開示で一時要因を確認"
+                f"（{'、'.join(one_off_labels)}）"
             )
-        else:
-            label += "(一時要因を含む・持続性は未確認)"
-        detail += "。会社資料で一時的需要・前倒し等が確認され、足元の増益を持続的な回復とは断定できません"
+        if temporary_rows:
+            detail += "。会社資料で一時的需要・前倒し等が確認され"
+        detail += "、足元の業績を持続的な回復とは断定できません"
 
     return {
         "label": label,
         "detail": detail,
-        "temporary_factor": bool(temporary_rows),
-        "temporary_evidence": temporary_evidence[:3],
+        "temporary_factor": has_temporary,
+        "temporary_labels": short_labels,
+        "temporary_display": f"あり（{'、'.join(short_labels)}）" if has_temporary else "未検出",
+        "temporary_evidence": (
+            [
+                f["title"] if (f.get("title") or "").startswith(f.get("date") or "\0")
+                else f"{f['date']} {f['title']}"
+                for f in (one_off_factors or [])
+            ] + temporary_evidence
+        )[:4],
     }

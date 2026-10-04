@@ -73,6 +73,45 @@ def extract_order_disclosure(text: str) -> dict | None:
     }
 
 
+# 景気全般・業界全体を述べる文(「わが国経済は…」「化学業界におきましても…」)。
+# 会社の受注・需要ではないため「マクロ環境」として分ける。
+_MACRO_RE = re.compile(
+    r"^(?:[^。]{0,30}?における)?(?:わが国|我が国|日本|国内|世界|海外|米国|欧州|中国|アジア)"
+    r"(?:の)?経済"
+    r"|^[^。、]{0,20}業界(?:におきましても|におきましては|におきまして|では|は|も)"
+)
+# 文中の製品名を見分ける語尾(製品・素材の一般名詞)。銘柄ごとの製品名は保持しない。
+# 「原材料」「材料」「製品」は一般語として多用されるため、主語句の中でのみ使う。
+_PRODUCT_NOUN_RE = re.compile(
+    r"[ァ-ヶー一-龠々・]{0,14}"
+    r"(?:可塑剤|活性剤|剤|樹脂|アルコール|塗料|フィルム|ゴム|繊維|鋼板|鋼管|合金|ガラス|"
+    r"セメント|肥料|医薬品|半導体|電池|インキ|顔料|触媒|シート)"
+)
+_SUBJECT_PRODUCT_NOUN_RE = re.compile(
+    r"[ァ-ヶー一-龠々・]{0,14}(?:製品|材料|原料|部材|部品)"
+)
+_SUBJECT_RE = re.compile(r"^([^。]{2,60}?)(?:は、|は|が、)")
+_CONTINUATION_PREFIXES = (
+    "一方で", "一方、", "しかしながら", "しかし", "また、", "その結果", "この結果", "これにより",
+)
+_COMPANY_WIDE = "全社・複数製品"
+
+
+def is_macro_sentence(sentence: str) -> bool:
+    return bool(_MACRO_RE.search(sentence.strip()))
+
+
+def _product_noun(text: str, allow_generic: bool = False) -> str | None:
+    """文中の製品名(語尾で判定)を返す。日本語の主要語は句の末尾にあるため最後の一致を使う。"""
+    for pattern in ((_PRODUCT_NOUN_RE, _SUBJECT_PRODUCT_NOUN_RE) if allow_generic else (_PRODUCT_NOUN_RE,)):
+        matches = [m.group(0).strip("・") for m in pattern.finditer(text) if len(m.group(0).strip("・")) >= 2]
+        # 「一部原材料」「原料」は投入物であり製品ではない。
+        matches = [m for m in matches if not m.endswith(("原材料", "原料")) and m not in ("材料", "製品", "部品")]
+        if matches:
+            return matches[-1]
+    return None
+
+
 def _product_name(sentence: str) -> str:
     centered = re.search(
         r"「([^」]{1,50})」を中心と(?:した|する)([^、。は]{2,32}?(?:製品|事業|分野|用途))",
@@ -94,9 +133,21 @@ def _product_name(sentence: str) -> str:
     subject = re.search(r"([^。]{2,45}?)(?:におきましては|につきましては|については)", sentence)
     if subject:
         candidate = subject.group(1).strip(" ・、")
-        if len(candidate) <= 32 and not re.search(r"\d|予想|理由|期間|年月|ページ", candidate):
+        # 「高耐熱・高耐候といった機能性可塑剤」→「機能性可塑剤」のように、
+        # 例示の修飾句を除いて製品名を残す。
+        candidate = re.split(r"をはじめとする|をはじめとした|といった|などの", candidate)[-1].strip(" ・、")
+        if 2 <= len(candidate) <= 32 and not re.search(r"\d|予想|理由|期間|年月|ページ", candidate):
             return candidate
-    return "全社・複数製品"
+    # 「主に床材…に使用される汎用可塑剤は、」のような主語句から製品名を取る。
+    plain_subject = _SUBJECT_RE.search(sentence)
+    if plain_subject:
+        noun = _product_noun(plain_subject.group(1), allow_generic=True)
+        if noun:
+            return noun
+    noun = _product_noun(sentence)
+    if noun:
+        return noun
+    return _COMPANY_WIDE
 
 
 def _direction(sentence: str) -> str:
@@ -170,21 +221,41 @@ def extract_business_signals(text: str, source: dict) -> list[dict]:
     document_effective_date = _effective_date(normalized)
     signals: list[dict] = []
     seen: set[str] = set()
+    previous_product: str | None = None
 
     for sentence in sentences:
         # PDFのページ境界で表と本文が連結された長大な文字列は、誤って
         # 製品名や割合を対応付ける危険があるため抽出対象にしない。
         if len(sentence) < 12 or len(sentence) > 480:
+            previous_product = None
             continue
+        macro = is_macro_sentence(sentence)
+        product = "景気全般・業界全体" if macro else _product_name(sentence)
+        # 「一方で、…販売数量は前年同期を下回った」のように前文の製品の説明を
+        # 続ける文は、全社の説明として扱わず、前文の製品であることを明示する。
+        if (
+            product == _COMPANY_WIDE and previous_product
+            and sentence.startswith(_CONTINUATION_PREFIXES)
+        ):
+            product = f"{previous_product}（前文の続き）"
+        current_product = product.replace("（前文の続き）", "")
+        previous_product = (
+            current_product if current_product not in (_COMPANY_WIDE, "景気全般・業界全体") else None
+        )
         has_price = any(keyword in sentence for keyword in PRICE_KEYWORDS)
         has_demand = any(keyword in sentence for keyword in DEMAND_KEYWORDS)
         categories = []
-        if has_demand:
-            categories.append("受注・需要")
-        if has_price:
-            categories.append("価格転嫁")
-        if not categories and any(keyword in sentence for keyword in CONTEXT_KEYWORDS):
-            categories.append("外部要因・一時要因")
+        if macro:
+            # 景気全般の文は需要の語を含んでも会社の受注・需要とはしない。
+            if has_demand or has_price or any(keyword in sentence for keyword in CONTEXT_KEYWORDS):
+                categories.append("マクロ環境")
+        else:
+            if has_demand:
+                categories.append("受注・需要")
+            if has_price:
+                categories.append("価格転嫁")
+            if not categories and any(keyword in sentence for keyword in CONTEXT_KEYWORDS):
+                categories.append("外部要因・一時要因")
         if not categories:
             continue
         evidence = sentence[:420]
@@ -192,9 +263,10 @@ def extract_business_signals(text: str, source: dict) -> list[dict]:
             continue
         seen.add(evidence)
         category = "／".join(categories)
-        product = _product_name(sentence)
-        if product == "全社・複数製品" and has_price and document_target:
+        if product == _COMPANY_WIDE and has_price and document_target:
             product = document_target
+        if macro:
+            has_price = False
         rate = _rate(sentence) if has_price else None
         transfer_gap = _transfer_gap(sentence) if has_price else None
         effective_date = _effective_date(sentence) or (
@@ -207,7 +279,7 @@ def extract_business_signals(text: str, source: dict) -> list[dict]:
             # 一方向の評価に丸めず「混在」を優先する。
             "direction": (
                 "混在" if _direction(sentence) == "混在"
-                else _direction(sentence) if has_demand
+                else _direction(sentence) if has_demand or macro
                 else _price_status(sentence, rate, effective_date)
             ),
             "revision_amount": rate,
