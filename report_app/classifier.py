@@ -339,6 +339,10 @@ ONE_OFF_WINDOW_DAYS = 3
 
 def _one_off_label(event: dict) -> str | None:
     title = event.get("title") or ""
+    if event.get("statement_factor"):
+        amount = event.get("amount_text") or ""
+        suffix = "（持続性は要確認）" if not event.get("one_off") else ""
+        return f"{title} {amount}{suffix}".strip()
     for keyword in _ONE_OFF_AMOUNT_KEYWORDS:
         if keyword in title:
             amount = event.get("amount_text")
@@ -387,7 +391,7 @@ def detect_one_off_factors(
         seen.add(label)
         factors.append({
             "label": label, "date": event.get("date"),
-            "title": event.get("title"), "url": event.get("url"),
+            "title": event.get("title"), "url": event.get("url"), "page": event.get("page"),
         })
     return factors
 

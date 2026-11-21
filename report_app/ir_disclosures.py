@@ -11,6 +11,7 @@ import requests
 from bs4 import BeautifulSoup
 from report_app.business_signals import extract_business_signals, merge_signals
 from report_app.edinet import RISK_EVENT_KEYWORDS, extract_disclosed_amount
+from report_app import statement_review
 
 
 _DATE_RE = re.compile(r"(20\d{2})\s*[./年-]\s*(\d{1,2})\s*[./月-]\s*(\d{1,2})\s*日?")
@@ -164,7 +165,7 @@ def discover_official_ir_index(corporate_url: str | None, report_date: date) -> 
     visited: set[str] = set()
     best: dict | None = None
     all_items: dict[tuple[str, str], dict] = {}
-    keywords = ("ir", "investor", "株主", "投資家", "ニュース", "news", "開示", "library")
+    keywords = ("investor", "株主", "投資家", "ニュース", "news", "開示", "library")
 
     while queue and len(visited) < 24:
         url = queue.pop(0)
@@ -198,7 +199,7 @@ def discover_official_ir_index(corporate_url: str | None, report_date: date) -> 
             if (
                 _same_site(linked, corporate_url)
                 and not linked_path.endswith(".pdf")
-                and any(k in marker for k in keywords)
+                and (_looks_like_ir_url(linked) or any(k in marker for k in keywords))
             ):
                 # RSSの隣に同名のHTML一覧を置くサイトでは、ページ内で発見した
                 # フィードURLからHTML候補を導く。企業名・銘柄・絶対URLは固定しない。
@@ -211,7 +212,7 @@ def discover_official_ir_index(corporate_url: str | None, report_date: date) -> 
             marker = linked.lower()
             preferred = (
                 "sitemap", "release", "library_02", "library", "ir/news", "ir_news",
-                "disclosure", "financial", "results",
+                "disclosure", "financial", "results", "settlement",
             )
             return (0 if any(word in marker for word in preferred) else 1, marker)
 
@@ -239,6 +240,7 @@ def fetch_recent_tdnet_disclosures(code: str, report_date: date, days: int = 31)
     """公式TDnetの無料掲載期間(31日)から対象銘柄の最新開示を探す。"""
     headers = {"User-Agent": "Mozilla/5.0"}
     found: list[dict] = []
+    failures = 0
     for offset in range(days):
         day = report_date - timedelta(days=offset)
         date_text = day.strftime("%Y%m%d")
@@ -247,6 +249,16 @@ def fetch_recent_tdnet_disclosures(code: str, report_date: date, days: int = 31)
             try:
                 response = requests.get(url, timeout=10, headers=headers)
             except requests.RequestException:
+                failures += 1
+                if failures >= 3:
+                    return None  # 到達不能を31日分繰り返さず企業IRへ進む。
+                break
+            if response.status_code in (401, 403):
+                return None
+            if response.status_code >= 500:
+                failures += 1
+                if failures >= 3:
+                    return None
                 break
             if response.status_code == 404:
                 break
@@ -312,11 +324,19 @@ def _document_pages(url: str, referer: str | None = None) -> list[str]:
     headers = {"User-Agent": "Mozilla/5.0"}
     if referer:
         headers["Referer"] = referer
-    try:
-        response = requests.get(url, timeout=20, headers=headers)
-        response.raise_for_status()
-    except requests.RequestException:
-        return []
+    for attempt in range(2):
+        try:
+            response = requests.get(url, timeout=20, headers=headers)
+            if response.status_code in (500, 502, 503, 504) and attempt == 0:
+                continue
+            response.raise_for_status()
+            break
+        except (requests.Timeout, requests.ConnectionError):
+            if attempt == 0:
+                continue
+            return []
+        except requests.RequestException:
+            return []
     content_type = response.headers.get("Content-Type", "").lower()
     if "pdf" in content_type or response.content[:4] == b"%PDF":
         return _pdf_pages(response.content)
@@ -483,6 +503,7 @@ def extract_quarterly_balance_sheet(pages: list[str]) -> dict | None:
     prior_values: dict[str, float] = {}
     debt_items: list[dict] = []
     receivables: list[dict] = []
+    inventory_items: list[dict] = []
     period_end = None
     scale = None
     for page in bs_pages:
@@ -509,6 +530,9 @@ def extract_quarterly_balance_sheet(pages: list[str]) -> dict | None:
             current = _bs_number(match.group("current"))
             prior = _bs_number(match.group("prior"))
             if current is None:
+                continue
+            if label in ("棚卸資産", "商品及び製品", "商品", "製品", "仕掛品", "原材料及び貯蔵品", "原材料", "貯蔵品"):
+                inventory_items.append({"label": label, "value": current, "prior": prior})
                 continue
             if label in _QUARTER_BS_DEBT_LABELS:
                 debt_items.append({"label": label, "value": current, "prior": prior})
@@ -537,6 +561,23 @@ def extract_quarterly_balance_sheet(pages: list[str]) -> dict | None:
         sum(item["value"] for item in result["receivables_items"]) if receivables else None
     )
     result["interest_bearing_debt"] = sum(item["value"] for item in result["debt_items"])
+    # 欠落をゼロで埋めない。棚卸合計と内訳が併記された場合は合計を優先。
+    inventory_total = next((r for r in inventory_items if r["label"] == "棚卸資産"), None)
+    labels = {r["label"] for r in inventory_items}
+    inventory_complete = inventory_total is not None or (
+        ("商品及び製品" in labels or {"商品", "製品"} <= labels)
+        and "仕掛品" in labels
+        and ("原材料及び貯蔵品" in labels or {"原材料", "貯蔵品"} <= labels))
+    selected = [inventory_total] if inventory_total else inventory_items
+    if inventory_complete:
+        result["inventory"] = sum(r["value"] for r in selected) * scale
+        if all(r["prior"] is not None for r in selected):
+            result["prior"]["inventory"] = sum(r["prior"] for r in selected) * scale
+    if receivables and all(r["prior"] is not None for r in receivables):
+        result["prior"]["receivables"] = sum(r["prior"] for r in receivables) * scale
+    for target in (result, result["prior"]):
+        if target.get("receivables") is not None and target.get("electronically_recorded_receivables") is not None:
+            target["total_receivables"] = target["receivables"] + target["electronically_recorded_receivables"]
     result["period_end"] = period_end.isoformat() if period_end else None
     return result
 
@@ -571,6 +612,10 @@ def _risk_event(item: dict, text: str, source_name: str = "企業公式IR") -> d
         )
     return {
         "section": source_name, "keywords": matched, "text": detail[:1800],
+        # 科目名がPDF改行をまたぐ場合や表示用抜粋の外にある場合にも照合する。
+        "loss_subjects": list(dict.fromkeys(re.findall(
+            r"[一-龠ァ-ヶー]{1,32}(?:評価損|売却損|閉鎖損失|減損損失)",
+            re.sub(r"\s+", "", normalized)))),
         "amount_text": amount_text,
         "date": item["date"], "url": item["url"], "title": item["title"],
     }
@@ -586,10 +631,15 @@ def fetch_latest_ir_disclosures(
 ) -> dict:
     """最新日の公式IRを取得。失敗時は明示的な未確認状態を返す。"""
     report_date = report_date or date.today()
-    # 適時開示はTDnetを第一取得元とする。無料公開期間外などで取得できない
-    # 場合に企業公式IRへフォールバックする。
-    source = fetch_recent_tdnet_disclosures(code, report_date)
+    # 企業公式IRを探索し、直近決算を確認できない場合にTDnetで補完する。
     discovered = discover_official_ir_index(corporate_url, report_date) if corporate_url else None
+    official_items = (discovered or {}).get("all_items", (discovered or {}).get("items", []))
+    recent_official_earnings = any(_is_earnings_release(item["title"])
+        and report_date - date.fromisoformat(item["date"]) <= timedelta(days=120)
+        for item in official_items)
+    # 公式IRで直近決算を確認できればそこから全資料を取得する。TDnetの全銘柄一覧を
+    # 過去31日×最大10ページ走査する遅延を避け、公式IRが見つからない場合に補完する。
+    source = None if recent_official_earnings else fetch_recent_tdnet_disclosures(code, report_date)
     official_source = None
     if official_ir_url:
         try:
@@ -633,8 +683,8 @@ def fetch_latest_ir_disclosures(
     }
     if not source or not source["items"]:
         return empty
-    items = source["items"]
-    all_items = source.get("all_items", items)
+    all_items = source.get("all_items", source["items"])
+    items = all_items
 
     latest_date = items[0]["date"]
     latest_items = [item for item in items if item["date"] == latest_date]
@@ -673,6 +723,8 @@ def fetch_latest_ir_disclosures(
         item_url = item["url"]
         if item_url not in document_pages:
             document_pages[item_url] = _document_pages(item_url, url)
+            if not any(page.strip() for page in document_pages[item_url]):
+                date_warnings.append(f"取得不可：{item['title']}（通信・PDF本文解析を確認。次回生成時に再試行）")
         return document_pages[item_url]
 
     date_warnings: list[str] = []
@@ -718,6 +770,15 @@ def fetch_latest_ir_disclosures(
     risk_items = [verify_date(item, "適時開示") for item in risk_items]
     date_warnings = list(dict.fromkeys(date_warnings))
 
+    # 訂正版を数値抽出で優先。当初版の日付は別途保持する。
+    numerical_earnings = latest_earnings or latest_earnings_original
+    current_review = statement_review.extract_statements(
+        pages_for(numerical_earnings), numerical_earnings
+    ) if numerical_earnings else None
+    latest_presentation = next((item for item in all_items
+        if re.search(r"決算.*説明(?:会)?資料", item["title"])
+        and (".pdf" in item["url"].lower() or "動画" not in item["title"])), None)
+    presentation_acquired = any(p.strip() for p in pages_for(latest_presentation)) if latest_presentation else False
     events = []
     for item in risk_items:
         document_text = " ".join(pages_for(item))
@@ -725,13 +786,29 @@ def fetch_latest_ir_disclosures(
         if event:
             events.append(event)
 
+    if current_review:
+        for factor in current_review["factors"]:
+            events.append({"section": factor["section"], "keywords": [factor["label"]],
+                "text": factor["label"], "title": factor["label"],
+                "amount_text": f"{factor['current']:,.0f}百万円", "date": numerical_earnings["date"],
+                "url": numerical_earnings["url"], "page": factor["page"],
+                "statement_factor": True, "one_off": factor["one_off"]})
+        scope = current_review.get("scope_change")
+        if scope:
+            events.append({"section": "連結範囲注記", "keywords": ["連結範囲の重要な変更"],
+                "text": scope["text"], "title": "連結範囲の重要な変更：有",
+                "date": numerical_earnings["date"], "url": numerical_earnings["url"],
+                "page": scope["page"], "statement_factor": True, "one_off": True})
+    events = statement_review.reconcile_risk_amounts(events, current_review)
     signals: list[dict] = []
     # 決算短信は同内容のレビュー版・訂正版が並ぶことがある。最新の当初版を
     # 1件だけ読み、別途、価格改定・値上げ等の専用開示を最大3件確認する。
     # 無関係な大型PDFを多数取得して処理が長時間化することも防ぐ。
     signal_items: list[dict] = []
-    if latest_earnings_original:
-        signal_items.append(latest_earnings_original)
+    if numerical_earnings:
+        signal_items.append(numerical_earnings)
+    if latest_presentation and presentation_acquired:
+        signal_items.append(latest_presentation)
     for item in all_items:
         if any(item["url"] == chosen["url"] for chosen in signal_items):
             continue
@@ -755,15 +832,19 @@ def fetch_latest_ir_disclosures(
             )
 
     quarter_balance = None
-    if latest_earnings_original and _is_quarterly_earnings_release(latest_earnings_original["title"]):
-        quarter_balance = extract_quarterly_balance_sheet(pages_for(latest_earnings_original))
+    if numerical_earnings and _is_quarterly_earnings_release(numerical_earnings["title"]):
+        quarter_balance = extract_quarterly_balance_sheet(pages_for(numerical_earnings))
         if quarter_balance:
             quarter_balance.update({
-                "source_title": latest_earnings_original["title"],
-                "source_date": latest_earnings_original["date"],
-                "source_url": latest_earnings_original["url"],
+                "source_title": numerical_earnings["title"],
+                "source_date": numerical_earnings["date"],
+                "source_url": numerical_earnings["url"],
             })
 
+    annual_item = next((item for item in all_items if _is_earnings_release(item["title"])
+        and not _is_quarterly_earnings_release(item["title"])
+        and "訂正" not in item["title"] and not _is_reviewed_earnings_release(item["title"])), None)
+    annual_review = statement_review.extract_statements(pages_for(annual_item), annual_item) if annual_item else None
     forecast_revision = None
     if latest_forecast_revision:
         forecast_revision = extract_forecast_revision(
@@ -781,4 +862,8 @@ def fetch_latest_ir_disclosures(
         "source_name": source.get("source_name", "企業公式IR"), "warning": None,
         "warnings": date_warnings,
         "quarter_balance": quarter_balance,
+        "statement_review": current_review, "annual_review": annual_review,
+        "latest_presentation": latest_presentation, "presentation_acquired": presentation_acquired,
+        "presentation_status": "取得済み" if presentation_acquired else "未取得：公式IRの説明資料を取得・解析できませんでした",
+
     }

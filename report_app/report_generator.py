@@ -9,7 +9,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from report_app import ai_analysis_package, advanced_metrics, business_signals, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation, valuation_comparison
+from report_app import ai_analysis_package, advanced_metrics, business_signals, classifier, edinet, grading, ir_disclosures, metrics, scraper, summary, valuation, valuation_comparison, statement_review
 from report_app.edinet_config import get_edinet_api_key
 from report_app.manual_input import load_or_create_manual_data
 from report_app.svg_chart import bar_chart_svg
@@ -111,6 +111,8 @@ def _enrich_manual_data_with_edinet(code: str, manual: dict, latest_period: str 
     何もせず manual をそのまま返す(呼び出し側の処理は変わらない)。
     """
     api_key = get_edinet_api_key()
+    manual = dict(manual)
+    manual["_edinet_status"] = "APIキー未設定：EDINETの自動取得を実行していません" if not api_key else "取得不可：対象年度を特定できません"
     if not api_key or not latest_period:
         return manual
 
@@ -120,6 +122,7 @@ def _enrich_manual_data_with_edinet(code: str, manual: dict, latest_period: str 
 
     detail = edinet.fetch_balance_sheet_detail_via_edinet(code, fy_end, latest.get("revenue"), api_key)
     if not detail:
+        manual["_edinet_status"] = "取得不可：EDINETの書類検索・通信・XBRL解析に失敗。次回生成時に再試行します"
         return manual
 
     manual = dict(manual)
@@ -131,6 +134,7 @@ def _enrich_manual_data_with_edinet(code: str, manual: dict, latest_period: str 
             manual[key] = value
             filled_fields.append(key)
 
+    manual["_edinet_status"] = "取得済み：XBRLタグがない科目・未対応タグの値は空欄を維持しています"
     manual["_edinet_source"] = {
         "doc_id": detail.get("_edinet_doc_id"),
         "submit_date": detail.get("_edinet_submit_date"),
@@ -504,7 +508,28 @@ def generate_report(code: str) -> Path:
         market_cap=market_cap_million,
         ebitda=valuation_ratios.get("ebitda"),
     )
-    cashflow_checks = metrics.check_cashflow_continuity(company_data.cashflow)
+    review = ir_status.get("statement_review") or {}
+    annual_review = ir_status.get("annual_review") or {}
+    annual_dates = annual_review.get("periods", {}).get("cf", {})
+    adjustments = {}
+    for side, date_key in (("current", "end"), ("prior", "prior_end")):
+        end = annual_dates.get(date_key)
+        if end:
+            period = end[:7].replace("-", ".")
+            adjustments[period] = []
+            for key in ("new_consolidation", "deconsolidation", "exchange"):
+                row = annual_review.get("cf", {}).get(key)
+                if row and row.get(side) is not None:
+                    value = -abs(row[side]) if key == "deconsolidation" else row[side]
+                    adjustments[period].append({"label": row["label"], "value": value,
+                        "page": row["page"], "source": annual_review.get("source")})
+    cashflow_checks = metrics.check_cashflow_continuity(company_data.cashflow, adjustments)
+    forecast = next((r for r in company_data.annual_performance if r.get("is_forecast")
+                     and fiscal_year_end and r.get("period") == f"{fiscal_year_end.year+1}.{fiscal_year_end.month:02d}"), None)
+    ttm_reference = statement_review.compute_ttm_reference(
+        review, annual_review, quarter_reference, forecast,
+        fiscal_year_end.isoformat() if fiscal_year_end else None)
+    working_capital = statement_review.working_capital_reference(ir_status.get("quarter_balance"))
     accrual_ratio = advanced_metrics.compute_accrual_ratio(
         latest.get("net_income"), latest.get("operating_cf"), latest.get("total_assets")
     )
@@ -608,6 +633,7 @@ def generate_report(code: str) -> Path:
         net_cash=net_cash,
         quarter_reference=quarter_reference,
         cashflow_checks=cashflow_checks,
+        statement_review=review, ttm_reference=ttm_reference, working_capital=working_capital,
         cashflow_check_by_period={row["period"]: row for row in cashflow_checks},
         asset_type=asset_type,
         profit_type=profit_type,

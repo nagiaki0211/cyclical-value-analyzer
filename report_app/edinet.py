@@ -71,7 +71,7 @@ def find_yuho_document(sec_code4: str, fiscal_year_end: date, api_key: str) -> d
     """
     cache_key = f"{sec_code4}_{fiscal_year_end.isoformat()}"
     cache = _load_cache()
-    if cache_key in cache:
+    if cache.get(cache_key):
         return cache[cache_key]
 
     sec_code5 = f"{sec_code4}0"
@@ -84,6 +84,7 @@ def find_yuho_document(sec_code4: str, fiscal_year_end: date, api_key: str) -> d
         params = {"date": d.isoformat(), "type": "2", "Subscription-Key": api_key}
         try:
             resp = _throttled_get(url, params=params)
+            resp.raise_for_status()
             data = resp.json()
         except (requests.RequestException, ValueError):
             d += timedelta(days=1)
@@ -97,8 +98,10 @@ def find_yuho_document(sec_code4: str, fiscal_year_end: date, api_key: str) -> d
                 return result
         d += timedelta(days=1)
 
-    cache[cache_key] = None
-    _save_cache(cache)
+    # 通信失敗・公開前の未発見を永続化しない。古い負のキャッシュも次回再検索。
+    if cache_key in cache:
+        del cache[cache_key]
+        _save_cache(cache)
     return None
 
 

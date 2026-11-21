@@ -70,16 +70,17 @@ class ComparisonTests(unittest.TestCase):
         self.assertLess(growth["value"], 142)
         self.assertIn("裏付けられません", growth["view"])
 
-    def test_section_renders_at_end_with_formula_and_assumption(self):
+    def test_section_renders_after_valuation_with_formula_and_assumption(self):
         source = (Path(__file__).resolve().parents[1] / "report_app/templates/report_template.html").read_text()
         start = source.index("  {% if price_comparison is defined %}")
-        end = source.index('  <div class="disclaimer">', start)
-        html = Environment(autoescape=True).from_string(source[start:end]).render(price_comparison=self.build())
+        end = source.index("  </section>", start) + len("  </section>")
+        html = Environment(autoescape=True).from_string(source[start:end] + "{% endif %}").render(price_comparison=self.build())
         self.assertIn("291.1円", html)
         self.assertIn("1,700.00", html)
         self.assertIn("アプリの成長仮定", html)
         self.assertIn("年数−1", html)
-        self.assertGreater(start, source.index('<section class="card glossary">'))
+        self.assertLess(start, source.index('<section class="card glossary">'))
+        self.assertGreater(start, source.index("企業価値の目安"))
         self.assertNotIn("nan", html)
 
 
