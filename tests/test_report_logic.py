@@ -1084,7 +1084,7 @@ class TestBusinessSignalExtraction(unittest.TestCase):
         )
         source = {"title": "価格改定", "date": "2026-03-30", "url": "https://example.com/a.pdf"}
         rows = business_signals.extract_business_signals(text, source)
-        price = next(row for row in rows if row["category"] == "価格転嫁")
+        price = next(row for row in rows if "価格転嫁" in row["category"])
         self.assertEqual(price["product"], "発泡ポリスチレンシート")
         self.assertEqual(price["revision_amount"], "120円/kg")
         self.assertEqual(price["confidence"], "A: 数値を会社資料で確認")
@@ -1107,7 +1107,7 @@ class TestBusinessSignalExtraction(unittest.TestCase):
         rows = business_signals.extract_business_signals(
             text, {"title": "第1四半期決算短信", "date": "2026-08-07", "url": "x"}
         )
-        price = next(row for row in rows if row["category"] == "価格転嫁")
+        price = next(row for row in rows if "価格転嫁" in row["category"])
         self.assertIsNone(price["revision_amount"])
         self.assertEqual(price["confidence"], "B: 会社の定性説明")
 
@@ -1119,7 +1119,7 @@ class TestBusinessSignalExtraction(unittest.TestCase):
         rows = business_signals.extract_business_signals(
             text, {"title": "決算説明会質疑応答", "date": "2026-05-16", "url": "x"}
         )
-        price = next(row for row in rows if row["category"] == "価格転嫁")
+        price = next(row for row in rows if "価格転嫁" in row["category"])
         self.assertIsNone(price["revision_amount"])
         self.assertEqual(price["transfer_gap"], "15%")
         self.assertEqual(price["confidence"], "A: 数値を会社資料で確認")
@@ -1511,7 +1511,7 @@ class TestFix2DisclosureDates(unittest.TestCase):
 
     def test_4406_earnings_and_forecast_revision_are_dated_2026_08_07(self):
         status = _fetch_4406_ir_status()
-        self.assertEqual(status["latest_date"], "2026-08-07")
+        self.assertEqual(status["latest_date"], "2026-10-01")
         self.assertEqual(status["latest_earnings_original"]["date"], "2026-08-07")
         self.assertEqual(status["latest_earnings"]["date"], "2026-08-07")
         self.assertEqual(status["latest_forecast_revision"]["date"], "2026-08-07")
@@ -1546,7 +1546,8 @@ class TestFix2DisclosureDates(unittest.TestCase):
             status = ir_disclosures.fetch_latest_ir_disclosures(
                 "4406", corporate_url="https://x/", report_date=date(2026, 10, 4)
             )
-        self.assertTrue(any("IR一覧の最新開示" in w for w in status["warnings"]))
+        self.assertEqual(status["latest_date"], "2026-10-01")
+        self.assertFalse(any("IR一覧の最新開示" in w for w in status["warnings"]))
 
 
 class TestFix3OneOffFactorsAcrossChapters(unittest.TestCase):

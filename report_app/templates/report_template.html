@@ -1,3 +1,6 @@
+{% macro review_num(value, digits=0) -%}
+{% if value is not none %}{{ ("{:,." ~ digits ~ "f}").format(value) }}{% else %}<span class="missing">取得不可</span>{% endif %}
+{%- endmacro %}
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -371,19 +374,19 @@
     {% if business_monitor.signals %}
     <table>
       <tr>
-        <th>種類</th><th>製品・用途</th><th>動向</th><th>改定幅・未転嫁・開始日</th>
+        <th>種類</th><th>製品・用途</th><th>動向</th><th>数量</th><th>売上高</th><th>改定幅・未転嫁・開始日</th>
         <th>一時要因</th><th>根拠・出典</th>
       </tr>
       {% for signal in business_monitor.signals %}
       <tr>
         <td>{{ signal.category }}<br><span class="note">{{ signal.confidence }}</span></td>
         <td>{{ signal.product }}</td>
-        <td>{{ signal.direction }}</td>
+        <td>{{ signal.direction }}</td><td>{{ signal.quantity_direction or "記載なし" }}</td><td>{{ signal.revenue_direction or "記載なし" }}</td>
         <td>
           {% if signal.revision_amount %}改定幅: {{ signal.revision_amount }}{% elif signal.transfer_gap %}未転嫁見込み: {{ signal.transfer_gap }}{% else %}<span class="missing">数値非開示</span>{% endif %}
           {% if signal.effective_date %}<br><span class="note">{{ signal.effective_date }}から</span>{% endif %}
         </td>
-        <td>{% if signal.temporary %}<span style="color:var(--bad);">先入れ・前倒し等を含む</span>{% else %}―{% endif %}</td>
+        <td>{% if signal.temporary %}<span style="color:var(--bad);">供給停止・先入れ・前倒し等（持続性要確認）</span>{% else %}―{% endif %}</td>
         <td style="text-align:left;">
           {{ signal.evidence }}
           {% if signal.source_url %}<br><span class="note">{{ signal.source_name }} / {{ signal.source_date }}{% if signal.source_page %} / PDF {{ signal.source_page }}ページ{% endif %} / <a href="{{ signal.source_url }}">原文</a></span>{% endif %}
@@ -447,10 +450,35 @@
     {% for chk in cashflow_checks if chk.warning %}
     <p class="note" style="color:var(--bad);">⚠ {{ chk.warning }}</p>
     {% endfor %}
+    <h3>CF差額の内訳（通期短信の同じ年度の値）</h3>
+    <table><tr><th>期</th><th>差額（従来値）</th><th>確認できた内訳</th><th>説明後の残差</th></tr>
+    {% for chk in cashflow_checks %}<tr><td>{{ chk.period }}</td><td>{{ review_num(chk.gap) }}</td>
+    <td>{% for d in chk.details %}{{ d.label }}：{{ review_num(d.value) }}<br>
+      {% if d.source %}<a href="{{ d.source.url }}#page={{ d.page }}">通期短信 PDF {{ d.page }}ページ</a><br>{% endif %}
+    {% else %}取得不可：同じ通期の内訳未取得{% endfor %}</td><td>{{ review_num(chk.residual) }}</td></tr>{% endfor %}</table>
+    <p class="note">警告は説明後の残差で判定します。内訳を取得できない項目はゼロと断定せず未説明分に残します。中間期の前年同期列を通期の代用にはしません。</p>
+    <h3>参考：最新の中間期・四半期CF（累計、百万円）</h3>
+    {% if statement_review.get('cf') %}
+    <p class="note"><a href="{{ statement_review.source.url }}">{{ statement_review.source.title }}</a>（{{ statement_review.source.date }}）。CF欄の△は現金流出。売上債権・棚卸資産の△は残高増加、仕入債務の△は残高減少です。</p>
+    <table><tr><th>科目</th><th>前年同期</th><th>当期累計</th><th>出典</th></tr>
+    {% for key in ['operating_cf','investing_cf','financing_cf','receivables_change','inventory_change','payables_change'] %}
+    {% set r = statement_review.cf.get(key, {}) %}<tr><td>{{ r.get('label', key) }}</td><td>{{ review_num(r.get('prior')) }}</td><td>{{ review_num(r.get('current')) }}</td><td>{% if r.get('page') %}PDF {{ r.page }}ページ{% else %}取得不可{% endif %}</td></tr>{% endfor %}
+    </table>
+    <p>営業CF ÷ 親会社株主に帰属する純利益：{{ review_num(statement_review.get('cf_profit_ratio'), 1) }}%
+    {% if statement_review.get('low_cf') %}<strong style="color:var(--bad)">注意：50%未満。利益に対して現金収入が少なく、運転資本の増加を確認してください。</strong>{% endif %}</p>
+    <p class="note">親会社純利益を分母に使う参考値です（連結営業CFとは範囲が異なります）。純損失・ゼロの場合は比率を算出しません。季節性と前年同期も併せて確認します。</p>
+    {% else %}<p class="missing">取得不可：最新短信の連結CF計算書を取得・解析できませんでした。第1・第3四半期はCF表を開示しない場合があります。年度CFで補間しません。</p>{% endif %}
     <p class="note">期首残高（前期末の現金等残高）＋営業CF＋投資CF＋財務CF と期末残高の差です。
       現金等残高は為替換算差額・連結範囲の変更でも動くため差が出ること自体は異常ではありませんが、
-      差の絶対値が期末残高の5%以上または100百万円以上の場合は警告します。前期のデータが無い年度は「算出不可」です。</p>
+      説明後の残差の絶対値が期末残高の5%以上または100百万円以上の場合は警告します。前期のデータが無い年度は「算出不可」です。</p>
 
+    <h3>取得状況と、次回取得で改善できる項目</h3>
+    <p class="note">{{ manual.get('_edinet_status', 'EDINET取得状況未確認') }}。IR資料はレポート生成のたびに再探索します。未取得を恒久的に固定しません。</p>
+    <table><tr><th>項目</th><th>現在の状態・理由</th><th>改善方法</th></tr>
+    {% for key, label in [('treasury_stock_retirement','自己株式消却額'),('retained_earnings_transfer','利益剰余金からの振替'),('depreciation_amortization','通期減価償却費'),('capital_expenditure_tangible','通期の有形固定資産取得額')] %}
+    <tr><td>{{ label }}</td><td>{% if manual.get(key) is not none %}取得済み：{{ review_num(manual.get(key)) }}{% else %}取得不可：{{ 'EDINET取得なし' if not edinet_source else '対応するXBRLタグ・明示額を取得できません' }}{% endif %}</td><td>EDINET設定・通信を確認して再生成。開示がない場合は原文確認できた値だけ補完。未記載を0と推定しません。</td></tr>{% endfor %}
+    <tr><td>株主資本コスト・負債コスト</td><td>自動取得対象外／手動設定型。通常の決算数値として単一の値が開示される項目ではありません。</td><td>独自に仮定を設定する場合のみ入力。アプリの既存の割引率の仮定は維持します。</td></tr>
+    <tr><td>値上げ率・受注数量</td><td>資料に具体的数値がない場合は取得不可（定性説明のみ）</td><td>後日の説明資料を再探索。売上増加から数量・値上げ率を逆算しません。</td></tr></table>
     <h3>自己株式の取得・消却と利益剰余金の変動 <span class="unit-note">(単位: 百万円)</span></h3>
     <table>
       <tr><th>項目</th><th>金額</th><th>読み方</th></tr>
@@ -615,6 +643,11 @@
       </tr>
       {% endfor %}
     </table>
+    <h3>参考：直近四半期末の運転資本</h3>
+    <p class="note">{{ ir_status.get('quarter_balance', {}).get('period_end', '基準日取得不可') if ir_status.get('quarter_balance') else '基準日取得不可' }}。年度の判定は維持し、短信の前期末列と当期末列を比較します。増加だけで危険と断定しません。</p>
+    <table><tr><th>科目</th><th>年度末</th><th>直近四半期末</th><th>年度末比</th></tr>
+    {% for r in working_capital %}<tr><td>{{ r.label }}</td><td>{{ review_num(r.prior) }}</td><td>{{ review_num(r.current) }}</td><td>{{ review_num(r.growth, 1) }}%</td></tr>{% endfor %}</table>
+
   </section>
 
   {% if major_shareholders %}
@@ -655,6 +688,7 @@
       <tr><td>最新の決算短信（当初版）</td><td>{% if ir_status.latest_earnings_original %}{{ ir_status.latest_earnings_original.date }}{% if ir_status.latest_earnings_original.date_source %}<br><span class="note">根拠: {{ ir_status.latest_earnings_original.date_source }}</span>{% endif %}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_earnings_original %}<a href="{{ ir_status.latest_earnings_original.url }}">{{ ir_status.latest_earnings_original.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
       <tr><td>最新の決算短信（レビュー・訂正版を含む）</td><td>{% if ir_status.latest_earnings %}{{ ir_status.latest_earnings.date }}{% if ir_status.latest_earnings.date_source %}<br><span class="note">根拠: {{ ir_status.latest_earnings.date_source }}</span>{% endif %}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_earnings %}<a href="{{ ir_status.latest_earnings.url }}">{{ ir_status.latest_earnings.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
       <tr><td>最新の業績予想修正</td><td>{% if ir_status.latest_forecast_revision %}{{ ir_status.latest_forecast_revision.date }}{% if ir_status.latest_forecast_revision.date_source %}<br><span class="note">根拠: {{ ir_status.latest_forecast_revision.date_source }}</span>{% endif %}{% else %}<span class="missing">未取得</span>{% endif %}</td><td>{% if ir_status.latest_forecast_revision %}<a href="{{ ir_status.latest_forecast_revision.url }}">{{ ir_status.latest_forecast_revision.title }}</a>{% else %}該当資料を特定できませんでした{% endif %}</td></tr>
+      <tr><td>最新の決算説明資料</td><td>{{ ir_status.get('latest_presentation', {}).get('date', '未取得') if ir_status.get('latest_presentation') else '未取得' }}</td><td>{% if ir_status.get('latest_presentation') %}<a href="{{ ir_status.latest_presentation.url }}">{{ ir_status.latest_presentation.title }}</a><br>{% endif %}{{ ir_status.get('presentation_status', '未取得') }}</td></tr>
     </table>
     {% for warning in ir_status.warnings %}<p class="note" style="color:var(--bad);">⚠ {{ warning }}</p>{% endfor %}
     <p class="note">発表日はIR一覧に掲載された日付と資料本文冒頭の日付を照合して表示します（取得日時・PDFの更新日時は使いません）。
@@ -662,14 +696,20 @@
     {% else %}
     <p class="note" style="color:var(--bad);">⚠ 最新IR・TDnet未確認</p>
     {% endif %}
+
+    <h3>最新短信の特別損益・営業外損益・連結範囲</h3>
+    {% if statement_review.get('factors') %}<table><tr><th>区分・科目</th><th>前年同期</th><th>当期</th><th>出典・扱い</th></tr>
+    {% for f in statement_review.factors %}<tr><td>{{ f.section }}：{{ f.label }}</td><td>{{ review_num(f.prior) }}</td><td>{{ review_num(f.current) }}</td><td><a href="{{ f.source.url }}#page={{ f.page }}">PDF {{ f.page }}ページ</a><br>{% if f.one_off %}特別損益{% else %}営業外損益：反復の可能性があり持続性要確認{% endif %}</td></tr>{% endfor %}</table>
+    {% else %}<p class="missing">対象科目は未検出／資料取得不可。特別損益がないことを保証しません。</p>{% endif %}
+    {% if statement_review.get('scope_change') %}<p><strong>連結範囲の重要な変更：有</strong> {{ statement_review.scope_change.text }} <a href="{{ statement_review.scope_change.source.url }}#page={{ statement_review.scope_change.page }}">PDF {{ statement_review.scope_change.page }}ページ</a></p>{% endif %}
     {% if risk_events %}
     <table>
       <tr><th>検出キーワード</th><th>開示内容(原文)</th><th>金額</th></tr>
       {% for e in risk_events %}
       <tr>
         <td>{{ e.keywords|join("、") }}<br><span class="note">{{ e.section }}</span></td>
-        <td style="text-align:left;">{{ e.text }}{% if e.url %}<br><span class="note">{{ e.date }} / {{ e.url }}</span>{% endif %}</td>
-        <td>{% if e.amount_text %}{{ e.amount_text }}{% if e.amount_basis %}<br><span class="note">{{ e.amount_basis }}</span>{% endif %}{% else %}<span class="missing">金額未確定</span>{% endif %}</td>
+        <td style="text-align:left;">{{ e.text }}{% if e.url %}<br><span class="note">{{ e.date }} / <a href="{{ e.url }}{% if e.page %}#page={{ e.page }}{% endif %}">原文{% if e.page %} PDF {{ e.page }}ページ{% endif %}</a></span>{% endif %}</td>
+        <td>{% if e.amount_text %}{{ e.amount_text }}{% if e.amount_basis %}<br><span class="note">{{ e.amount_basis }}</span>{% if e.actual_source_url %}<br><a href="{{ e.actual_source_url }}#page={{ e.actual_source_page }}">実績の出典</a>{% endif %}{% endif %}{% else %}<span class="missing">金額未確定</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </table>
@@ -754,6 +794,18 @@
     <p class="note">{{ quarter_reference.reason or "直近四半期末の値は未取得です" }}（年度末ベースの値のみ表示しています）。</p>
     {% endif %}
 
+    <h3>追加参考：直近12か月（TTM）・会社予想のEV/EBITDA</h3>
+    <table><tr><th>項目</th><th>TTM</th><th>会社予想＋TTM減価償却費</th></tr>
+    <tr><td>営業利益</td><td>{{ review_num(ttm_reference.operating_income) }}</td><td>{{ review_num(ttm_reference.get('forecast_operating_income')) }}</td></tr>
+    <tr><td>TTM減価償却費</td><td>{{ review_num(ttm_reference.depreciation) }}</td><td>{{ review_num(ttm_reference.depreciation) }}</td></tr>
+    <tr><td>EBITDA</td><td>{{ review_num(ttm_reference.ebitda) }}</td><td>{{ review_num(ttm_reference.forecast_ebitda) }}</td></tr>
+    <tr><td>四半期末EV</td><td>{{ review_num(ttm_reference.ev) }}</td><td>{{ review_num(ttm_reference.ev) }}</td></tr>
+    <tr><td>EV/EBITDA（倍）</td><td>{{ review_num(ttm_reference.ev_ebitda, 2) }}</td><td>{{ review_num(ttm_reference.forecast_ev_ebitda, 2) }}</td></tr></table>
+    {% for key, parts in ttm_reference.components.items() %}<p class="note">{{ 'TTM営業利益' if key == 'operating_income' else 'TTM減価償却費' }} = 前期通期 {{ review_num(parts[0]) }} − 前年同期累計 {{ review_num(parts[1]) }} ＋ 当期累計 {{ review_num(parts[2]) }}</p>{% endfor %}
+    {% if ttm_reference.reason %}<p class="missing">{{ ttm_reference.reason }}</p>{% endif %}
+    <p class="note">EVは取得時点の時価総額＋同じ四半期末の有利子負債＋非支配株主持分−現金及び預金−流動有価証券。時価総額の時点は四半期末とは異なります。従来の通期倍率と四半期EV÷年度EBITDAの参考値も維持しています。会社予想は実績ではなく、TTM減価償却費を加える混合指標です。</p>
+    {% for source in [ttm_reference.get('source_current'), ttm_reference.get('source_annual')] if source %}<p class="note">出典：<a href="{{ source.url }}">{{ source.title }}</a>（{{ source.date }}）</p>{% endfor %}
+    {% if statement_review.get('factors') %}<p class="note">最新実績の経常利益には下記の営業外損益が含まれます。会社予想に同額が継続するとは限らず、通期予想の内訳は会社説明で確認が必要です：{% for f in statement_review.factors if not f.one_off %}{{ f.label }} {{ review_num(f.current) }}百万円（PDF {{ f.page }}ページ）／{% endfor %}</p>{% endif %}
     <h3>たーちゃん式企業価値評価(書籍の方式)</h3>
     <p class="note">
       書籍に記載された2つの計算式を用いた評価です。両者は同じ対象の弱気・強気シナリオではなく、
@@ -792,6 +844,9 @@
           {% else %}<span class="missing">{{ dcf_taachan.liquidation_growth_reason }}</span>{% endif %}
         </td>
       </tr>
+      {% for row in price_comparison.rows if row.key == 'growth' %}
+      <tr><td>参考：{{ row.label }}</td><td style="text-align:left">{{ row.formula }}<br>「現在株価との比較」と同じ計算結果。既存の実績ベース評価・採点は維持。</td><td>{{ review_num(row.value, 1) }}円／株</td></tr>
+      {% endfor %}
     </table>
     <p class="note">
       FCFの定義: {{ dcf_taachan.fcf_definition }}。
@@ -994,6 +1049,60 @@
     {% endif %}
   </section>
 
+  {% if price_comparison is defined %}
+  <section class="card" id="valuation-comparison">
+    <h2>現在株価{% if price_comparison.price is not none %} {{ "{:,.0f}".format(price_comparison.price) }}円{% endif %}との比較</h2>
+    <p class="note">どんな前提なら現在株価を評価できるかを比較します。差率＝（推定価値−現在株価）÷現在株価×100。予想上昇率ではありません。</p>
+    <p class="note">資産・負債は計算に使用した実績入力値です。手入力値の年度は出典との照合が必要です。現金力・DCFのFCFは通期実績を使用し、会社予想経常利益では置き換えません。</p>
+    <table class="comparison-table">
+      <tr><th>評価方法</th><th>使用するデータ・前提</th><th>1株の推定価値</th><th>株価との差</th><th>この前提ならどう考えるか</th></tr>
+      {% for row in price_comparison.rows %}
+      <tr{% if row.key == 'price' %} class="market-price-row"{% endif %}>
+        <td style="text-align:left;">{{ row.label }}</td>
+        <td data-label="使用するデータ・前提" style="text-align:left;">{{ row.basis }}</td>
+        <td data-label="1株の推定価値">{% if row.value is not none %}{{ "{:,.1f}".format(row.value) }}円{% else %}<span class="missing">算出不可／未取得</span>{% endif %}</td>
+        <td data-label="株価との差">{% if row.delta is not none %}{{ "{:+,.1f}".format(row.delta) }}円<br>{{ "{:+.1f}".format(row.pct) }}%{% else %}―{% endif %}</td>
+        <td data-label="この前提ならどう考えるか" style="text-align:left;">{{ row.view }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <div class="mobile-comparison">
+      {% for row in price_comparison.rows %}
+      <article class="comparison-item{% if row.key == 'price' %} market-price-row{% endif %}">
+        <h3>{{ row.label }}</h3>
+        <p class="note">{{ row.basis }}</p>
+        <div class="comparison-numbers">
+          <div><span class="note">1株の推定価値</span><strong>{% if row.value is not none %}{{ "{:,.1f}".format(row.value) }}円{% else %}算出不可／未取得{% endif %}</strong></div>
+          <div><span class="note">株価との差</span><strong>{% if row.delta is not none %}{{ "{:+,.1f}".format(row.delta) }}円<br>{{ "{:+.1f}".format(row.pct) }}%{% else %}―{% endif %}</strong></div>
+        </div>
+        <p>{{ row.view }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    <h3>この株価をどう見るか</h3>
+    {% for view in price_comparison.views %}<p>{{ view }}</p>{% endfor %}
+    <p class="note">清算価値＋成長のこの行は、今期会社予想を1年目に置く比較用の計算です。上の実績ベースの書籍式評価・採点とは使用利益と成長開始時点が異なります。年{{ "%.0f"|format(price_comparison.growth * 100) }}%成長はモデルの仮定であり、会社が公表した翌期以降の予想ではありません。</p>
+    {% for warning in price_comparison.warnings %}<p class="note" style="color:var(--warn);">{{ warning }}</p>{% endfor %}
+    <h3>計算式と具体的な数値</h3>
+    <p class="note">FCFは事業で得た現金から設備投資などを差し引いた金額です。非支配株主持分は子会社の価値のうち他の株主に帰属する部分です。将来の利益を現在価値に換算するため割り引いています。</p>
+    {% for row in price_comparison.rows %}{% if row.key != 'price' %}
+    <details><summary>{{ row.label }}の計算根拠</summary>
+      <p>{{ row.formula }}</p>
+      {% if row.key == 'growth' and price_comparison.years %}
+      <div class="formula-table-wrap"><table>
+        <tr><th>年</th><th>実績／予想／仮定</th><th>経常利益（百万円）</th><th>利益の現在価値（百万円）</th><th>計算式</th></tr>
+        {% for year in price_comparison.years %}
+        <tr><td>{{ year.year }}年目{% if year.year == 1 %}<br>{{ price_comparison.forecast_period }}期{% endif %}</td><td>{{ year.basis }}</td>
+          <td>{{ "{:,.2f}".format(year.profit) }}</td><td>{{ "{:,.2f}".format(year.pv) }}</td>
+          <td>{{ "{:,.2f}".format(year.profit) }} × {{ price_comparison.factor }} ÷ (1＋{{ "%.0f"|format(price_comparison.rate * 100) }}%)^{{ year.year }}</td></tr>
+        {% endfor %}
+      </table></div>
+      {% endif %}
+    </details>
+    {% endif %}{% endfor %}
+  </section>
+  {% endif %}
+
   <section class="card">
     <h2>{{ sec.breakeven }}. 損益分岐点分析(固定費・変動費の概算) <span class="unit-note">(単位: 百万円)</span></h2>
     {% if breakeven.available %}
@@ -1132,7 +1241,7 @@
       <tr>
         <td>一時要因あり</td><td>最新決算短信＋同時期（発表日±3日）の適時開示</td><td>会社説明</td>
         <td>{% if cycle_summary.temporary_factor %}<span style="color:var(--bad);">{{ cycle_summary.temporary_display }}</span>{% else %}未検出{% endif %}</td>
-        <td style="text-align:left;">{% if cycle_summary.temporary_factor %}一時要因あり（持続性は要確認）。根拠: {{ cycle_summary.temporary_evidence|join(" / ") }}{% else %}決算短信本文・同時期の適時開示から対象キーワードを検出しませんでした{% endif %}</td>
+        <td style="text-align:left;">{% if cycle_summary.temporary_factor %}一時要因あり（持続性は要確認）。根拠: {{ cycle_summary.temporary_evidence|join(" / ") }}{% else %}決算短信の損益科目・連結範囲注記・本文、同時期の適時開示から対象要因を検出できませんでした（資料未取得を含み、要因なしとは断定しません）{% endif %}</td>
       </tr>
     </table>
     <p class="note">
@@ -1182,59 +1291,6 @@
     </dl>
   </section>
 
-  {% if price_comparison is defined %}
-  <section class="card" id="valuation-comparison">
-    <h2>現在株価{% if price_comparison.price is not none %} {{ "{:,.0f}".format(price_comparison.price) }}円{% endif %}との比較</h2>
-    <p class="note">どんな前提なら現在株価を評価できるかを比較します。差率＝（推定価値−現在株価）÷現在株価×100。予想上昇率ではありません。</p>
-    <p class="note">資産・負債は計算に使用した実績入力値です。手入力値の年度は出典との照合が必要です。現金力・DCFのFCFは通期実績を使用し、会社予想経常利益では置き換えません。</p>
-    <table class="comparison-table">
-      <tr><th>評価方法</th><th>使用するデータ・前提</th><th>1株の推定価値</th><th>株価との差</th><th>この前提ならどう考えるか</th></tr>
-      {% for row in price_comparison.rows %}
-      <tr{% if row.key == 'price' %} class="market-price-row"{% endif %}>
-        <td style="text-align:left;">{{ row.label }}</td>
-        <td data-label="使用するデータ・前提" style="text-align:left;">{{ row.basis }}</td>
-        <td data-label="1株の推定価値">{% if row.value is not none %}{{ "{:,.1f}".format(row.value) }}円{% else %}<span class="missing">算出不可／未取得</span>{% endif %}</td>
-        <td data-label="株価との差">{% if row.delta is not none %}{{ "{:+,.1f}".format(row.delta) }}円<br>{{ "{:+.1f}".format(row.pct) }}%{% else %}―{% endif %}</td>
-        <td data-label="この前提ならどう考えるか" style="text-align:left;">{{ row.view }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    <div class="mobile-comparison">
-      {% for row in price_comparison.rows %}
-      <article class="comparison-item{% if row.key == 'price' %} market-price-row{% endif %}">
-        <h3>{{ row.label }}</h3>
-        <p class="note">{{ row.basis }}</p>
-        <div class="comparison-numbers">
-          <div><span class="note">1株の推定価値</span><strong>{% if row.value is not none %}{{ "{:,.1f}".format(row.value) }}円{% else %}算出不可／未取得{% endif %}</strong></div>
-          <div><span class="note">株価との差</span><strong>{% if row.delta is not none %}{{ "{:+,.1f}".format(row.delta) }}円<br>{{ "{:+.1f}".format(row.pct) }}%{% else %}―{% endif %}</strong></div>
-        </div>
-        <p>{{ row.view }}</p>
-      </article>
-      {% endfor %}
-    </div>
-    <h3>この株価をどう見るか</h3>
-    {% for view in price_comparison.views %}<p>{{ view }}</p>{% endfor %}
-    <p class="note">清算価値＋成長のこの行は、今期会社予想を1年目に置く比較用の計算です。上の実績ベースの書籍式評価・採点とは使用利益と成長開始時点が異なります。年{{ "%.0f"|format(price_comparison.growth * 100) }}%成長はモデルの仮定であり、会社が公表した翌期以降の予想ではありません。</p>
-    {% for warning in price_comparison.warnings %}<p class="note" style="color:var(--warn);">{{ warning }}</p>{% endfor %}
-    <h3>計算式と具体的な数値</h3>
-    <p class="note">FCFは事業で得た現金から設備投資などを差し引いた金額です。非支配株主持分は子会社の価値のうち他の株主に帰属する部分です。将来の利益を現在価値に換算するため割り引いています。</p>
-    {% for row in price_comparison.rows %}{% if row.key != 'price' %}
-    <details><summary>{{ row.label }}の計算根拠</summary>
-      <p>{{ row.formula }}</p>
-      {% if row.key == 'growth' and price_comparison.years %}
-      <div class="formula-table-wrap"><table>
-        <tr><th>年</th><th>実績／予想／仮定</th><th>経常利益（百万円）</th><th>利益の現在価値（百万円）</th><th>計算式</th></tr>
-        {% for year in price_comparison.years %}
-        <tr><td>{{ year.year }}年目{% if year.year == 1 %}<br>{{ price_comparison.forecast_period }}期{% endif %}</td><td>{{ year.basis }}</td>
-          <td>{{ "{:,.2f}".format(year.profit) }}</td><td>{{ "{:,.2f}".format(year.pv) }}</td>
-          <td>{{ "{:,.2f}".format(year.profit) }} × {{ price_comparison.factor }} ÷ (1＋{{ "%.0f"|format(price_comparison.rate * 100) }}%)^{{ year.year }}</td></tr>
-        {% endfor %}
-      </table></div>
-      {% endif %}
-    </details>
-    {% endif %}{% endfor %}
-  </section>
-  {% endif %}
 
   <div class="disclaimer">
     本レポートは投資助言ではなく、分析のための参考情報です。株探(kabutan.jp)等の

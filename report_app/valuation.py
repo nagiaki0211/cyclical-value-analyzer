@@ -565,7 +565,11 @@ def compute_net_cash(latest: dict, manual: dict) -> dict:
     operating_cf = latest.get("operating_cf")
 
     if cash is None or securities is None or debt is None:
-        return {"available": False, "narrow": None, "adjusted": None, "years": None, **net_cash_display(None)}
+        return {"available": False, "narrow": None, "adjusted": None, "years": None,
+                "cash": cash, "securities": securities, "investment_securities": investment_securities,
+                "debt": debt, "operating_cf": operating_cf,
+                "depletion_applicable": operating_cf is not None and operating_cf < 0,
+                **net_cash_display(None)}
 
     narrow = cash + securities - debt
     adjusted = narrow + investment_securities if investment_securities is not None else None

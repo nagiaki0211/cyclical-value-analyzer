@@ -730,13 +730,14 @@ CASHFLOW_GAP_RATIO = 0.05
 CASHFLOW_GAP_AMOUNT = 100.0
 
 
-def check_cashflow_continuity(cashflow: list[dict]) -> list[dict]:
+def check_cashflow_continuity(cashflow: list[dict], adjustments: dict | None = None) -> list[dict]:
     """
     期首の現金等残高 + 営業CF + 投資CF + 財務CF と期末残高の差を年度ごとに計算する。
 
     現金等残高は為替換算差額・連結範囲の変更でも動くため、差が出ること自体は
     異常ではない。ただし差が大きい場合はデータ取得誤りの可能性もあるため、
-    |差| が期末残高の5%以上、または100百万円以上のときに警告する。
+    同じ通期の換算差額・連結範囲変更を説明した後の |残差| が、
+    期末残高の5%以上、または100百万円以上のときに警告する。
     前年の残高やCFが欠ける年度は推定せず「算出不可」(gap=None)とする。
     """
     rows = sorted(
@@ -750,20 +751,25 @@ def check_cashflow_continuity(cashflow: list[dict]) -> list[dict]:
         flows = [row.get("operating_cf"), row.get("investing_cf"), row.get("financing_cf")]
         gap = None
         warning = None
+        details = (adjustments or {}).get(row["period"], [])
+        explained = sum(item["value"] for item in details)
+        residual = None
         if opening is not None and closing is not None and all(v is not None for v in flows):
             gap = closing - (opening + sum(flows))
-            if abs(gap) >= CASHFLOW_GAP_AMOUNT or (
-                closing and abs(gap) >= abs(closing) * CASHFLOW_GAP_RATIO
+            residual = gap - explained
+            if abs(residual) >= CASHFLOW_GAP_AMOUNT or (
+                closing and abs(residual) >= abs(closing) * CASHFLOW_GAP_RATIO
             ):
                 warning = (
-                    f"キャッシュフローの合計と期末残高に差あり（{row['period']}期 差額{gap:+,.0f}。"
+                    f"キャッシュフローの合計と期末残高に差あり（{row['period']}期 差額{gap:+,.0f}、説明後残差{residual:+,.0f}。"
                     "為替換算差額・連結範囲の変更・データ取得誤りの可能性）"
                 )
         results.append({
             "period": row["period"],
             "opening": opening,
             "closing": closing,
-            "gap": gap,
+            "gap": gap, "explained": explained if details else None,
+            "residual": residual, "details": details,
             "warning": warning,
         })
     return results

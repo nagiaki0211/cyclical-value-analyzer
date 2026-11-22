@@ -9,14 +9,14 @@ from datetime import date
 PRICE_KEYWORDS = (
     "価格改定", "価格是正", "価格転嫁", "販売価格への転嫁",
     "販売価格の適正化", "適正な価格対応", "製品価格の維持・改定",
-    "製品価格の改定", "製品価格改定", "値上げ", "転嫁",
+    "製品価格の改定", "製品価格改定", "値上げ", "転嫁", "適正な販売価格", "適正価格販売",
 )
 DEMAND_KEYWORDS = (
-    "受注", "需要", "出荷数量", "販売数量", "物件獲得", "新規顧客",
+    "受注", "需要", "出荷数量", "販売数量", "数量", "売上高", "物件獲得", "新規顧客",
 )
 TEMPORARY_KEYWORDS = (
     "一時的", "一過性", "先入れ需要", "先行需要", "前倒し", "駆け込み",
-    "在庫積み増し", "反動",
+    "在庫積み増し", "反動", "生産及び供給が停止", "供給停止", "生産停止",
 )
 CONTEXT_KEYWORDS = (
     "原材料", "供給不安", "供給懸念", "供給への懸念", "調達・供給",
@@ -43,7 +43,8 @@ _FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９．，", "01234
 
 
 def _normalize(text: str) -> str:
-    return " ".join((text or "").translate(_FULLWIDTH_DIGITS).split())
+    text = re.sub(r"(?<=[^\x00-\x7F])\s+(?=[^\x00-\x7F])", "", text or "")
+    return " ".join(text.translate(_FULLWIDTH_DIGITS).split())
 
 
 def extract_order_disclosure(text: str) -> dict | None:
@@ -76,7 +77,7 @@ def extract_order_disclosure(text: str) -> dict | None:
 # 景気全般・業界全体を述べる文(「わが国経済は…」「化学業界におきましても…」)。
 # 会社の受注・需要ではないため「マクロ環境」として分ける。
 _MACRO_RE = re.compile(
-    r"^(?:[^。]{0,30}?における)?(?:わが国|我が国|日本|国内|世界|海外|米国|欧州|中国|アジア)"
+    r"^(?:[^。]{0,50}?における)?(?:わが国|我が国|日本|国内|世界|海外|米国|欧州|中国|アジア)"
     r"(?:の)?経済"
     r"|^[^。、]{0,20}業界(?:におきましても|におきましては|におきまして|では|は|も)"
 )
@@ -157,6 +158,18 @@ def _direction(sentence: str) -> str:
         if re.search(pattern, sentence):
             return label
     return "記載あり（方向は原文確認）"
+
+
+def _measure_direction(sentence: str, measure: str) -> str:
+    # 「数量、売上高ともに…」の共有述語を先に拾い、各指標の節を分離する。
+    joint = re.search(r"数量[、・及びと]+売上高ともに([^。]{0,80})", sentence)
+    if joint:
+        return _direction(joint[1])
+    m = re.search(re.escape(measure) + r"(?:は|が|の)?([^。]{0,100})", sentence)
+    if not m:
+        return "記載なし"
+    clause = re.split(r"ものの|一方|が、|(?:販売)?数量|売上高", m[1], maxsplit=1)[0]
+    return _direction(clause)
 
 
 def _price_status(sentence: str, rate: str | None, effective_date: str | None) -> str:
@@ -242,7 +255,7 @@ def extract_business_signals(text: str, source: dict) -> list[dict]:
         previous_product = (
             current_product if current_product not in (_COMPANY_WIDE, "景気全般・業界全体") else None
         )
-        has_price = any(keyword in sentence for keyword in PRICE_KEYWORDS)
+        has_price = any(keyword in sentence for keyword in PRICE_KEYWORDS) or bool(re.search(r"価格.{0,8}(?:改定|維持|是正)", sentence))
         has_demand = any(keyword in sentence for keyword in DEMAND_KEYWORDS)
         categories = []
         if macro:
@@ -258,7 +271,7 @@ def extract_business_signals(text: str, source: dict) -> list[dict]:
                 categories.append("外部要因・一時要因")
         if not categories:
             continue
-        evidence = sentence[:420]
+        evidence = sentence[:480]
         if evidence in seen:
             continue
         seen.add(evidence)
@@ -282,6 +295,8 @@ def extract_business_signals(text: str, source: dict) -> list[dict]:
                 else _direction(sentence) if has_demand or macro
                 else _price_status(sentence, rate, effective_date)
             ),
+            "quantity_direction": _measure_direction(sentence, "数量") if not macro else "対象外",
+            "revenue_direction": _measure_direction(sentence, "売上高") if not macro else "対象外",
             "revision_amount": rate,
             "transfer_gap": transfer_gap,
             "effective_date": effective_date,
