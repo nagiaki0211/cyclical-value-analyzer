@@ -98,7 +98,7 @@ class StatementReviewTests(unittest.TestCase):
         self.assertIsNone(self.ttm(current=changed)["ebitda"])
 
     def test_actual_loss_reconciles_only_a_same_named_earlier_forecast(self):
-        old={"date":"2026-08-07","title":"特別損失の計上","text":"関係会社株式評価損を計上する見込み","amount_text":"約800百万円"}
+        old={"date":"2026-08-07","title":"特別損失の計上","text":"2027年3月期第2四半期に関係会社株式評価損として約800百万円を計上する見込み","amount_text":"約800百万円"}
         out=review.reconcile_risk_amounts([old],self.current)[0]
         self.assertIn("756百万円",out["amount_text"])
         self.assertIn("約800百万円",out["amount_text"])
@@ -159,7 +159,7 @@ class StatementReviewTests(unittest.TestCase):
 
     def test_loss_subject_split_across_pdf_lines_is_reconciled(self):
         event=ir._risk_event({"date":"2026-08-07","title":"特別損失の計上","url":"https://example.test/old.pdf"},
-            "特別損失 " + "説明"*1000 + " 関係会社株式\n評価損として連結決算で約800百万円を計上する見込み")
+            "特別損失 " + "説明"*1000 + " 2027年3月期第2四半期に関係会社株式\n評価損として連結決算で約800百万円を計上する見込み")
         self.assertTrue(any("関係会社株式評価損" in s for s in event["loss_subjects"]))
         self.assertIn("756百万円",review.reconcile_risk_amounts([event],self.current)[0]["amount_text"])
 
@@ -172,6 +172,76 @@ class StatementReviewTests(unittest.TestCase):
     def test_wrapped_parent_profit_label_is_not_lost(self):
         pages=["連結損益計算書\n(単位：百万円)\n2025年4月1日 2025年9月30日 2026年4月1日 2026年9月30日\n営業利益 1 2\n親会社株主に帰属する中間純利益又は親会社株主に\n帰属する中間純損失（△） △3 4"]
         self.assertEqual(review.extract_statements(pages,SOURCE)["pl"]["net_income"]["current"],4)
+
+    def corrected_release(self, text, title=None):
+        correction={"date":"2026-11-20","title":title or "（訂正）2027年3月期 第2四半期決算短信", "url":"https://example.test/corrected.pdf"}
+        def pages_for(item):
+            return text if item["url"] == correction["url"] else self.pages
+        warnings=[]
+        result=ir._select_financial_release(correction,SOURCE,pages_for,warnings)
+        return result,warnings
+
+    def test_dividend_only_correction_preserves_full_original_financials(self):
+        (source,current,balance),warnings=self.corrected_release(["2027年3月期 第2四半期決算短信の配当状況の注記を訂正します。"])
+        self.assertEqual(source["url"],SOURCE["url"])
+        self.assertEqual(current["pl"]["operating_income"]["current"],1772)
+        self.assertEqual(current["cf"]["operating_cf"]["current"],43)
+        self.assertEqual(balance["cash_and_deposits"],5927)
+        self.assertTrue(warnings)
+
+    def test_partial_pl_correction_keeps_cf_and_balance_but_withholds_pl(self):
+        (_,current,balance),warnings=self.corrected_release(["2027年3月期第2四半期決算短信の中間連結損益計算書の営業利益を訂正します。"])
+        self.assertFalse(current["pl"])
+        self.assertFalse(current["factors"])
+        self.assertEqual(current["cf"]["operating_cf"]["current"],43)
+        self.assertEqual(balance["cash_and_deposits"],5927)
+        self.assertIsNone(current["cf_profit_ratio"])
+
+    def test_full_corrected_release_replaces_same_period_original(self):
+        pages=[p.replace("1,772","1,773") for p in self.pages]
+        (source,current,balance),warnings=self.corrected_release(pages)
+        self.assertEqual(source["url"],"https://example.test/corrected.pdf")
+        self.assertEqual(current["pl"]["operating_income"]["current"],1773)
+        self.assertEqual(current["cf"]["operating_cf"]["current"],43)
+        self.assertFalse(warnings)
+
+    def test_unknown_or_different_correction_period_does_not_mix_values(self):
+        for title,text in [("決算短信の訂正","配当注記の訂正"),
+                           ("2026年3月期第1四半期決算短信の訂正","配当注記の訂正")]:
+            with self.subTest(title=title):
+                (_,current,balance),warnings=self.corrected_release([text],title)
+                self.assertFalse(current["pl"])
+                self.assertFalse(current["cf"])
+                self.assertIsNone(balance)
+                self.assertTrue(warnings)
+
+    def test_recent_but_stale_company_ir_does_not_suppress_tdnet(self):
+        old={"date":"2026-08-07","title":"2027年3月期 第1四半期決算短信","url":"https://example.test/old.pdf"}
+        revision={"date":"2026-11-18","title":"2027年3月期業績予想の修正","url":"https://example.test/revision.pdf"}
+        official={"url":"https://example.test/ir","items":[old]}
+        tdnet={"url":"https://tdnet.test","items":[revision,SOURCE]}
+        def pages(url,referer=None):
+            return self.pages if url==SOURCE["url"] else ["2026年11月18日 各位"]
+        with patch.object(ir,"discover_official_ir_index",return_value=official),patch.object(ir,"fetch_recent_tdnet_disclosures",return_value=tdnet) as fetch_tdnet,patch.object(ir,"_document_pages",side_effect=pages):
+            result=ir.fetch_latest_ir_disclosures("TEST",corporate_url="https://example.test",report_date=date(2026,11,21))
+        fetch_tdnet.assert_called_once()
+        self.assertEqual(result["latest_earnings_original"]["url"],SOURCE["url"])
+        self.assertEqual(result["latest_forecast_revision"]["date"],"2026-11-18")
+
+    def test_recorded_loss_is_not_relabelled_as_a_forecast(self):
+        event={"date":"2026-08-07","title":"特別損失の計上", "text":"2027年3月期第2四半期に関係会社株式評価損50百万円を計上しました。", "amount_text":"50百万円"}
+        actual=review.reconcile_risk_amounts([event],self.current)[0]
+        self.assertEqual(actual["amount_text"],"50百万円")
+        self.assertNotIn("forecast_amount_text",actual)
+
+    def test_estimated_loss_needs_the_same_explicit_period_and_amount(self):
+        for period,amount in [("2026年3月期第2四半期","約800百万円"),
+                              ("2027年3月期第1四半期","約800百万円"),
+                              ("対象期間未確認","約800百万円"),
+                              ("2027年3月期第2四半期","500百万円")]:
+            with self.subTest(period=period,amount=amount):
+                event={"date":"2026-08-07","title":"特別損失の計上", "text":period+"に関係会社株式評価損として"+amount+"を計上する見込み", "amount_text":"約800百万円"}
+                self.assertEqual(review.reconcile_risk_amounts([event],self.current)[0]["amount_text"],"約800百万円")
 
 
 class DemandReviewTests(unittest.TestCase):

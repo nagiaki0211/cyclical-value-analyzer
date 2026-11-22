@@ -30,6 +30,18 @@ def normalize(text: str) -> str:
     return unicodedata.normalize("NFKC", text or "")
 
 
+def fiscal_reporting_period(text: str) -> tuple[int, int, int] | None:
+    """明記された決算期と四半期（通期=0）を読む。日付から推測しない。"""
+    text = re.sub(r"\s+", "", normalize(text))
+    match = re.search(r"(20\d{2})年(\d{1,2})月期", text)
+    if not match:
+        return None
+    tail = text[match.end():match.end() + 45]
+    quarter = re.search(r"第([1-4])四半期", tail)
+    q = int(quarter[1]) if quarter else 2 if re.search(r"中間|上期", tail) else 0
+    return int(match[1]), int(match[2]), q
+
+
 def number(text: str) -> float | None:
     if text in ("―", "−", "—", "－", "-"):
         return 0.0  # 表の明示的な残高なし。科目自体の欠落とは区別する。
@@ -177,16 +189,26 @@ def working_capital_reference(balance: dict | None) -> list[dict]:
 
 def reconcile_risk_amounts(events: list[dict], review: dict | None) -> list[dict]:
     """同名科目が明示された見込み開示だけに後日の実績を対応させる。"""
+    from report_app.edinet import extract_disclosed_amount
     result = [dict(e) for e in events or []]
     review = review or {}
     source = review.get("source", {})
     for event in result:
         text = (event.get("text") or "") + (event.get("title") or "")
+        # 既に計上済みの別期間の実績を「見込み」に付け替えない。
+        evidence = event.get("loss_estimate_evidence") or [text]
+        expected_period = fiscal_reporting_period(source.get("title", ""))
         for row in review.get("factors", []):
             if (row["label"] not in re.sub(r"\s+", "", normalize(text))
                     and not any(row["label"] in subject for subject in event.get("loss_subjects", []))) or not event.get("date") or event["date"] >= source.get("date", ""):
                 continue
-            if event.get("amount_text"):
+            estimates = [part for part in evidence
+                if row["label"] in re.sub(r"\s+", "", normalize(part))
+                and re.search(r"見込|予定|見積|想定", part)
+                and expected_period is not None
+                and fiscal_reporting_period(part) == expected_period
+                and extract_disclosed_amount(normalize(part), ("連結", row["label"])) == event.get("amount_text")]
+            if event.get("amount_text") and len(estimates) == 1:
                 event["forecast_amount_text"] = event["amount_text"]
                 event["amount_text"] = f"{row['current']:,.0f}百万円（実績・決算短信）／見込み {event['forecast_amount_text']}（{event['date']}開示）"
                 event["amount_basis"] = f"{source.get('date')} 決算短信 PDF {row['page']}ページ：{row['label']}"
